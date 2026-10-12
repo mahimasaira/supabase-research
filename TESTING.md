@@ -134,7 +134,8 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | Do | Expect |
 |---|---|
 | `node --env-file=.env.local scripts/docusign-check.mjs` | 4 PASS lines + account name (DocuSign setup works) |
-| `npm run probe:docusign:proof:pending` | `All checks passed` (15) |
+| `npm run probe:docusign:proof:pending` | `All checks passed` (15); switches sending off while it runs |
+| `npm run probe:docusign:proof:send` | `All checks passed` (13); section B sends real emails to `DOCUSIGN_TEST_SIGNER_EMAIL` |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -149,7 +150,25 @@ Seed (`npm run probe:recurring:seed`), log in as the test host:
 | Host: Cancel booking (or guest: Cancel / cancel link) | booking cancelled, slot free again |
 | Untick the setting, book another slot as a guest | "Booked: …" (confirmed straight away) |
 
-No email arrives yet: sending the agreement is stage 2.
+Since stage 2 this **sends a real agreement** to the email you enter as the guest. Use your own address (or switch sending off: `npm run probe:docusign:setup` restores it).
+
+### Stage 2: sending the agreement
+
+One-time setup (again after `npm run db:reset` or when DocuSign values change):
+
+```bash
+npm run probe:docusign:setup     # writes supabase/functions/.env + Vault secrets, prints no values
+# then restart: npm run functions:serve
+```
+
+| Do | Expect |
+|---|---|
+| `npm run probe:docusign:proof:send` | `All checks passed` (13). Section B needs `DOCUSIGN_TEST_SIGNER_EMAIL` in `.env.local` and sends **2 real agreements** there |
+| Host opted in, guest books with **your** email | within seconds an email "Please sign: your booking with …" (check spam); the document lists host, guest, time(s) |
+| Dashboard / History | History: "DocuSign sent the agreement to …"; booking still "awaiting signature" (signing is handled in stage 3) |
+| Recurring booking (`/probes/recurring`, Stage 2, 2 weeks) on an opt-in host | **one** email listing both weeks |
+| Studio: `select guest_name, status, signature_status, envelope_id, signature_error from bookings order by created_at desc` | `sent` + an envelope id; on problems `failed` + the error |
+| Studio: `select id, status_code, error_msg from net._http_response order by id desc` | did the database's call reach the function? (`200` = yes) |
 
 ## Troubleshooting
 
@@ -161,5 +180,6 @@ No email arrives yet: sending the agreement is stage 2.
 | Edge Function returns 503 right after a file save | hot reload; retry after a second |
 | Stage 3 / edge-proof fails to connect | `functions:serve` isn't running |
 | Results show your host instead of `anon` | you're logged in. Log out to test as a guest |
+| Agreement never arrives | Studio: `bookings.signature_status` / `signature_error`, then `net._http_response`; run `npm run probe:docusign:setup` and restart `functions:serve` |
 | `supabase migration new` hangs | it's waiting for SQL on stdin; run it in a normal terminal, or add `< /dev/null` |
 | Changed a migration that was already applied | `npm run db:reset` re-runs all migrations but **wipes local data**; reseed afterwards |

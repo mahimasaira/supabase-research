@@ -7,6 +7,7 @@ export function describeActor(entry, myId) {
   if (entry.actor_id && entry.actor_id === myId) return 'You'
   switch (entry.actor_role) {
     case 'anon': return 'Guest'
+    case 'docusign': return 'DocuSign' // the integration's Edge Functions (feature 4)
     case 'authenticated': return 'A logged-in user'
     case 'supabase_auth_admin': return 'System (account)'
     case 'postgres':
@@ -30,7 +31,9 @@ function describeEntry(e) {
     case 'booking.created': return `booked ${bookingSlot(e)} for ${guest(e)}${c.guest_email ? ` (${c.guest_email})` : ''}`
     case 'booking.cancelled': return `cancelled ${guest(e)}'s booking on ${bookingSlot(e)}`
     case 'booking.deleted': return `removed ${guest(e)}'s booking on ${bookingSlot(e)}`
-    case 'booking.updated': return `changed ${guest(e)}'s booking on ${bookingSlot(e)} (${Object.keys(c).join(', ')})`
+    case 'booking.updated':
+      if (c.signature_status) return describeSignature(e, c)
+      return `changed ${guest(e)}'s booking on ${bookingSlot(e)} (${Object.keys(c).join(', ')})`
     case 'slot.created': return `added the slot ${slotTime(e)}`
     case 'slot.moved': return `moved a slot from ${when(c.starts_at?.from, c.ends_at?.from)} to ${when(c.starts_at?.to, c.ends_at?.to)}`
     case 'slot.deleted': return `deleted the slot ${slotTime(e)}`
@@ -46,6 +49,16 @@ function describeEntry(e) {
   }
 }
 
+// Feature 4 (DocuSign): the agreement's progress. 'sending' is an internal step: not shown.
+function describeSignature(e, c) {
+  switch (c.signature_status.to) {
+    case 'sending': return null
+    case 'sent': return `sent the agreement to ${guest(e)} for ${bookingSlot(e)}`
+    case 'failed': return `could not send the agreement for ${guest(e)}'s booking on ${bookingSlot(e)}${c.signature_error?.to ? `: ${c.signature_error.to}` : ''}`
+    default: return `agreement for ${guest(e)}'s booking on ${bookingSlot(e)}: ${c.signature_status.to}`
+  }
+}
+
 // Entries arrive newest first; entries from one transaction (same tx_id) are adjacent.
 // One transaction = one line, e.g. a whole recurring booking.
 export function groupHistory(entries, myId) {
@@ -55,7 +68,9 @@ export function groupHistory(entries, myId) {
     if (last && last.txId === e.tx_id) last.entries.push(e)
     else groups.push({ txId: e.tx_id, at: e.created_at, entries: [e] })
   }
-  return groups.map((g) => ({ ...g, who: describeActor(g.entries[0], myId), text: describeGroup(g.entries) }))
+  return groups
+    .map((g) => ({ ...g, who: describeActor(g.entries[0], myId), text: describeGroup(g.entries) }))
+    .filter((g) => g.text) // hidden steps (e.g. DocuSign 'sending')
 }
 
 function describeGroup(entries) {
@@ -68,5 +83,11 @@ function describeGroup(entries) {
     return `booked ${weeks.length} weeks from ${first ? bookingSlot(first) : 'the first slot'} for ${guest(first ?? series)}`
   }
   if (entries.length === 1) return describeEntry(entries[0])
-  return entries.map(describeEntry).join('; ')
+  // e.g. DocuSign sent one agreement for all weeks of a series: show it once.
+  if (entries.every((e) => e.action === 'booking.updated' && e.changes?.signature_status)) {
+    const first = [...entries].sort((a, b) => (a.context?.slot_starts_at ?? '').localeCompare(b.context?.slot_starts_at ?? ''))[0]
+    const text = describeEntry(first)
+    return text && `${text} (+${entries.length - 1} more week${entries.length > 2 ? 's' : ''})`
+  }
+  return [...new Set(entries.map(describeEntry).filter(Boolean))].join('; ')
 }

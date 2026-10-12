@@ -1,5 +1,5 @@
 // Proof script for feature 4 (DocuSign), stage 1: bookings that wait for a signature.
-// No DocuSign calls in this stage. Local only.
+// Never reaches DocuSign (sending is switched off while it runs). Local only.
 // Run: npm run probe:docusign:proof:pending   (resets the test data before and after)
 import { createClient } from '@supabase/supabase-js'
 import { execSync } from 'node:child_process'
@@ -28,6 +28,14 @@ const book = (slotId, name, extra = {}) => {
 }
 
 seed()
+// Since stage 2, waiting bookings trigger a real DocuSign send. This script books with made-up
+// addresses, so point the database's send URL at an unreachable address while it runs.
+const realSendUrl = psql(`select coalesce(max(decrypted_secret), '') from vault.decrypted_secrets where name = 'docusign_send_url'`)
+const setSendUrl = (url) => psql(`select vault.update_secret(id, '${url.replace(/'/g, "''")}') from vault.secrets where name = 'docusign_send_url'`)
+if (realSendUrl) {
+  setSendUrl('http://127.0.0.1:9/unreachable')
+  process.on('exit', () => setSendUrl(realSendUrl)) // also restores after a crash
+}
 const host = client()
 await host.auth.signInWithPassword({ email: 'recurring-host@test.dev', password: 'password123' })
 
@@ -86,7 +94,8 @@ await host.from('profiles').update({ require_signature: false }).eq('id', HOST)
 const [w2again] = slotAt(2)
 await book(w2again, 'After Switch Off')
 check('after switching off: new bookings are confirmed, waiting ones stay waiting',
-  booking('After Switch Off') === 'confirmed|-' && psql(`select count(*) from bookings where status = 'pending_signature'`) === '2')
+  booking('After Switch Off') === 'confirmed|-' && psql(`select count(*) from bookings b join slots s on s.id = b.slot_id where s.host_id = '${HOST}' and b.status = 'pending_signature'`) === '2',
+  psql(`select string_agg(b.guest_name || ':' || b.status, ', ') from bookings b join slots s on s.id = b.slot_id where s.host_id = '${HOST}'`))
 
 seed()
 console.log(`\n${failures === 0 ? 'All checks passed' : `${failures} check(s) FAILED`} (test data reset)`)

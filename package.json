@@ -21,6 +21,8 @@
     "probe:audit:compare": "node --env-file=.env.local src/probes/audit/compare-tools.mjs",
     "probe:audit:proof:history": "node --env-file=.env.local src/probes/audit/proof-history.mjs",
     "probe:docusign:proof:pending": "node --env-file=.env.local src/probes/docusign/proof-pending.mjs",
+    "probe:docusign:setup": "node --env-file=.env.local src/probes/docusign/setup-local.mjs",
+    "probe:docusign:proof:send": "node --env-file=.env.local src/probes/docusign/proof-send.mjs",
     "test:clean": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \"delete from auth.users where email like '%@test.dev'\""
   },
   "dependencies": {
