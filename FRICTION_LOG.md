@@ -315,3 +315,32 @@ Probe page: `/probes/audit`, reset: `npm run probe:audit:seed`, proof: `npm run 
 - **Surprising:** that the "official" auditing tool broke authentication on install, and that pgaudit can't see writes from Supabase's own API without logging all reads.
 - **Time spent:** ~90 min (incl. the revert/redo and the pgaudit investigation)
 - **Backend needed?** **No.** None of the three needs a server. A backend would only help with "who" for pgaudit-style SQL logs (it knows the user, the database doesn't) and with shipping logs somewhere the database owner can't edit.
+
+## Stage 4: the host's history page
+- **Step:** Advanced 2, stage 4
+- **What happened:** A **History** page (`/history`, link in the top bar) shows the logged-in host everything that happened on their booking page, newest first, in plain words: who ("You", "Guest", "Database admin", "System (account)") and what ("booked Mon 19 Oct 15:30 for Anna (a\*\*\*@example.com)", "moved a slot from … to …", "renamed the page …"). A recurring booking (series + N bookings, one transaction) is **one line**. Filter (all / bookings / slots / profile), "Load more" (50 per page). Data: `listAuditHistory()` in `src/services/`; display logic in `src/features/audit/history.js` (pure functions, tested without the app). Proof `npm run probe:audit:proof:history`: **12/12 checks**.
+- **Context at write time.** Stage 2 entries for bookings only stored `slot_id`, so after a slot was moved or deleted the history couldn't say *which time* had been booked. New `context` column, filled by the trigger when the entry is written (booking: slot time + guest name; slot: its time; series: weeks/weekday/time). Proven: Anna's booking still shows "Mon 19 Oct 15:30" after the host cancelled it and deleted the slot. Lesson: an audit trail must not depend on joins to data that can change later.
+- **Paging gotcha:** all entries of one transaction share the same `created_at` (Postgres' `now()` is the transaction *start*). A "older than this time" cursor would silently skip the rest of a recurring booking at a page boundary. The cursor is (`created_at`, `id`), expressed as a PostgREST `or=(created_at.lt.X,and(created_at.eq.X,id.lt.Y))` filter. Proven by paging 2 at a time: every entry exactly once.
+- **No new security code.** Reading was already restricted by stage 2's RLS policy (host sees entries about them); the page needed nothing extra. Proven again through the page's own service: another host gets 0 entries, a guest gets `42501`.
+- **supa_audit removed** (`20261012214601_audit_remove_supa_audit.sql`): no more double logging, cancel tokens or full emails in `audit.record_version`. `probe:audit:compare` now skips with a pointer to commit `603a771`.
+- **Limits:** times show in the viewer's browser time zone (feature 6). Older stage 2 entries have no context and show "a slot". Cascaded booking deletions still have no host (stage 2), so they never appear here. No live updates: "Refresh" re-reads (Realtime on `audit_log` would need its own RLS-safe channel, like the slots broadcast).
+- **Code:** 2 migrations (101 lines context + trigger, 13 lines removal), service 31, display helpers 72, page 75, router/nav/services 9, proof 97, compare guard 7, 1 npm script. 12 files, ~400 lines.
+- **Testing / debugging:** Easy. The proof prints exactly what the page shows; the display logic is plain JavaScript; RLS was already proven.
+- **Surprising:** that the hardest part was not Supabase but data modelling: recording context at write time, and a transaction-safe cursor.
+- **Time spent:** ~45 min
+- **Backend needed?** **No.** RLS + a view-less query + client-side formatting is enough.
+
+### Audit log: the four stages compared
+
+| | Stage 1: browser logs | Stage 2: triggers | Stage 3: supa_audit | Stage 3: pgaudit |
+|---|---|---|---|---|
+| Can be skipped | ❌ yes (direct API call) | ✅ no | ✅ no | ✅ no |
+| Other paths (rpc, Edge Function, Studio) | ❌ missed | ✅ logged | ✅ logged | ✅ logged |
+| Forged entries | ❌ accepted | ✅ impossible | ✅ impossible | ✅ impossible |
+| Rolled-back changes | ❌ out of sync | ✅ not logged | ✅ not logged | ❌ logged as if they happened |
+| Who | ✅ from JWT | ✅ from JWT | ✅ from JWT | ❌ only `authenticator` |
+| Secrets / personal data | ✅ masked by client | ✅ masked, no token | ❌ token + full email | ✅ API values not logged |
+| Host can read it in the app | ✅ | ✅ (stage 4 page) | ❌ | ❌ |
+| Effort | small JS, but every path must call it | ~150 lines SQL | vendor + patch (broke sign-up) | role settings + API restart |
+
+**For the blog:** an audit log is where Supabase does *better* than typical backend code. Database triggers see every change from every path, in the same transaction, and RLS makes them readable per host with no extra code. A NestJS interceptor would still miss Studio, scripts, migrations and cascades. The two "official" tools didn't fit: `supa_audit` is archived and broke sign-up as published; `pgaudit` answers "which SQL ran", not "who did what". **Total feature time: ~4 h (4 stages).**

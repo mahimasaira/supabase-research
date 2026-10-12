@@ -30,7 +30,8 @@ Reset before every manual test: leftovers from earlier runs change the results.
 | `npm run probe:recurring:edge-proof` | `All checks passed` (17) | **yes** |
 | `npm run probe:audit:proof` | `All demos reproduced` (19) | no |
 | `npm run probe:audit:proof:triggers` | `All checks passed` (21, no SKIP) | for section 4 |
-| `npm run probe:audit:compare` | `All checks passed` (11) | no |
+| `npm run probe:audit:compare` | `SKIP` since stage 4 (supa_audit removed); see commit `603a771` | no |
+| `npm run probe:audit:proof:history` | `All checks passed` (12) | no |
 | `psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -f src/probes/recurring/sql/rpc-rls-proof.sql` | part 1: RLS **error**, part 2: success | no |
 | `npm run build` | `✓ built` | no |
 
@@ -105,6 +106,8 @@ await fetch('http://127.0.0.1:54321/rest/v1/audit_log', {
 
 ### Stage 3: supa_audit and pgaudit vs. our triggers
 
+> supa_audit was removed again in stage 4. To re-run this section: `git checkout 603a771`, `npm run db:reset` (wipes local data).
+
 | Do | Expect |
 |---|---|
 | `npm run probe:audit:compare` (~30 s, restarts the local API container twice) | `All checks passed` (11) and a per-action table of what each tool recorded |
@@ -112,6 +115,19 @@ await fetch('http://127.0.0.1:54321/rest/v1/audit_log', {
 | Sign up a new account | works (the supa_audit migration includes the fix that keeps sign-up from failing) |
 
 pgaudit is only on while the compare script runs. To look at it yourself: `docker logs supabase_db_supabase-booking 2>&1 | grep AUDIT` during the run.
+
+### Stage 4: host history page (`/history`)
+
+| Do | Expect |
+|---|---|
+| `npm run probe:audit:proof:history` | `All checks passed` (12), and a printout of what the page shows |
+| Seed, log in as the test host, open **History** in the top bar | "Nothing yet." |
+| Log out, book a slot (`/book/11111111-1111-4111-8111-111111111111`), log in, Refresh | "Guest booked Mon … for <name> (x\*\*\*@…)" |
+| `/probes/recurring`, Stage 2, 5th Monday × 2 weeks, then History | **one** line: "Guest booked 2 weeks from … for …" |
+| As host on Dashboard: cancel that booking, delete a free slot | "You cancelled …", "You deleted the slot …" |
+| Studio: rename the host in `profiles` | "Database admin renamed the page …" |
+| Filter "Slots" / "Bookings" / "Profile" | only those entries |
+| Log in as another account, open History | "Nothing yet." (only their own sign-up at most) |
 
 ## Troubleshooting
 

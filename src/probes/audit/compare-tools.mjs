@@ -21,6 +21,13 @@ const client = () => createClient(url, key, { auth: { persistSession: false } })
 const slotAt = (week) => psql(`select id || '|' || to_char(starts_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
   from slots where host_id = '${HOST}' order by starts_at offset ${week - 1} limit 1`).split('|')
 
+// supa_audit was removed again in stage 4 (migration 20261012214601_audit_remove_supa_audit.sql).
+if (psql(`select to_regnamespace('audit') is null`) === 't') {
+  console.log('SKIP  supa_audit is no longer installed (removed in audit stage 4).')
+  console.log('      To re-run this comparison: git checkout 603a771, then npm run db:reset (wipes local data).')
+  process.exit(0)
+}
+
 let failures = 0
 function check(name, ok, detail) {
   if (!ok) failures++

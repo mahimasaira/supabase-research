@@ -9,6 +9,7 @@ const router = createRouter({
     { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { guestOnly: true } },
     { path: '/signup', name: 'signup', component: () => import('@/views/SignupView.vue'), meta: { guestOnly: true } },
     { path: '/dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { requiresAuth: true } },
+    { path: '/history', name: 'history', component: () => import('@/features/audit/HistoryView.vue'), meta: { requiresAuth: true } },
     // Public pages: no auth needed, and logged-in hosts can open them too.
     { path: '/book/:hostId', name: 'book', component: () => import('@/views/BookView.vue') },
     { path: '/cancel/:token', name: 'cancel', component: () => import('@/views/CancelView.vue') },

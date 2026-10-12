@@ -5,6 +5,7 @@ import { bookRecurringSplit } from './recurring/split'
 import { bookRecurringRpc } from './recurring/rpc'
 import { bookRecurringEdge } from './recurring/edge'
 import * as clientAudit from './audit/clientLog'
+import * as auditHistory from './audit/history'
 
 // ---- slots ----
 export async function getHostProfile(hostId) {
@@ -68,3 +69,8 @@ export const cancelAsHostLogged = (params, opts) => clientAudit.cancelAsHostLogg
 export const deleteSlotLogged = (params, opts) => clientAudit.deleteSlotLogged(supabase, params, opts)
 // Writes any entry the caller likes, which is the point of the forging demo.
 export const logAuditEventFromClient = (entry) => clientAudit.logEvent(supabase, entry)
+
+// ---- audit log, stage 4: the host's history (audit_log, written by triggers) ----
+// opts: { hostId, kind: 'all' | 'bookings' | 'slots' | 'profile', limit, cursor }
+// result: { entries, nextCursor } (nextCursor null on the last page)
+export const listAuditHistory = (opts) => auditHistory.listAuditHistory(supabase, opts)

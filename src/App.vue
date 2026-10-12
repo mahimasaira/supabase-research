@@ -18,6 +18,7 @@ async function logout() {
       <span class="flex-1" />
       <template v-if="user">
         <RouterLink :to="{ name: 'dashboard' }">Dashboard</RouterLink>
+        <RouterLink :to="{ name: 'history' }">History</RouterLink>
         <span class="text-gray-500">{{ user.email }}</span>
         <button class="underline" @click="logout">Log out</button>
       </template>

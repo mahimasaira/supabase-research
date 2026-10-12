@@ -13,4 +13,5 @@ export const {
   getHostProfile, listFreeSlots, listHostSlots,
   recurringStrategies, bookRecurring,
   bookSlotLogged, cancelAsGuestLogged, cancelAsHostLogged, deleteSlotLogged, logAuditEventFromClient,
+  listAuditHistory,
 } = backend

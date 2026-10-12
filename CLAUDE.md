@@ -20,10 +20,10 @@ The same booking app is built twice, sharing one Vue frontend:
 
 ## Advanced features (this branch, in order)
 
-1. Recurring bookings & transactions (in progress, see below)
-2. Audit log
+1. Recurring bookings & transactions (done)
+2. Audit log (done)
 3. Spam protection (rate limiting for anonymous bookings)
-4. Third-party integration with webhooks (payment or e-signature, provider still being decided)
+4. Third-party integration with webhooks: e-signature with **DocuSign** (demo account; JWT grant verified with `scripts/docusign-check.mjs`, values in `.env.local`, private key `docusign_private.key` git-ignored; not designed yet)
 5. Bulk reminders
 6. Weekly availability & time zones
 
@@ -41,7 +41,7 @@ The earlier "3-step split booking" transactions probe (`src/probes/transactions/
 Where things are: migration `supabase/migrations/20261009212046_recurring_bookings.sql`, probe page `/probes/recurring` (`src/probes/recurring/`), seed/reset `npm run probe:recurring:seed` (test host `recurring-host@test.dev` / `password123`, fixed id `11111111-1111-4111-8111-111111111111`, 6 Mondays 10:00 UTC, week 4 pre-booked), Studio check query `src/probes/recurring/sql/check.sql`, implementations in `src/services/supabase/recurring/`.
 Status: all 3 stages done. Stage 2 = `book_recurring` (migration `20261012071039_recurring_bookings_rpc.sql`, proof `src/probes/recurring/sql/rpc-rls-proof.sql`). Stage 3 = Edge Function `supabase/functions/book-recurring/` (direct connection as `postgres`, verifies apikey/JWT itself, `set_config('role')` + `request.jwt.claims` per transaction so RLS applies; `verify_jwt = false` in config.toml). Local: `npm run functions:serve` must run for stage 3; proof: `npm run probe:recurring:edge-proof`.
 
-### Feature 2 status: audit log (stage 1 done: browser logging, `audit_log_client`, migration `20261012111921_audit_log_client.sql`, page `/probes/audit`, `npm run probe:audit:seed` / `probe:audit:proof`; stage 2 done: triggers write `audit_log`, migration `20261012160421_audit_log_triggers.sql`, `npm run probe:audit:proof:triggers`, Studio `src/probes/audit/sql/check-triggers.sql`; stage 3 done: supa_audit vendored + patched in `20261012182300_audit_supa_audit.sql` (tracks the same 4 tables), pgaudit only switched on by `npm run probe:audit:compare`; stage 4 host history page next)
+### Feature 2 status: audit log (stage 1 done: browser logging, `audit_log_client`, migration `20261012111921_audit_log_client.sql`, page `/probes/audit`, `npm run probe:audit:seed` / `probe:audit:proof`; stage 2 done: triggers write `audit_log`, migration `20261012160421_audit_log_triggers.sql`, `npm run probe:audit:proof:triggers`, Studio `src/probes/audit/sql/check-triggers.sql`; stage 3 done: supa_audit vendored + patched in `20261012182300_audit_supa_audit.sql` (tracks the same 4 tables), pgaudit only switched on by `npm run probe:audit:compare`; stage 4 done: `/history` page (`src/features/audit/`), `context` column + supa_audit removed in migrations `20261012214557` / `20261012214601`, `npm run probe:audit:proof:history`. Feature 2 complete.)
 
 Decisions (agreed 2026-10-12):
 - **Log:** bookings (create/cancel), slots (create/move/delete), booking series, profile changes. Login events are left to Supabase Auth's own logs (note in friction log).
