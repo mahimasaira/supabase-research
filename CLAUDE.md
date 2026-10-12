@@ -39,7 +39,7 @@ Three stages, each selectable on the probe page via `bookRecurring()`:
 The earlier "3-step split booking" transactions probe (`src/probes/transactions/`, `probe_*` tables) was removed and replaced by this feature.
 
 Where things are: migration `supabase/migrations/20261009212046_recurring_bookings.sql`, probe page `/probes/recurring` (`src/probes/recurring/`), seed/reset `npm run probe:recurring:seed` (test host `recurring-host@test.dev` / `password123`, fixed id `11111111-1111-4111-8111-111111111111`, 6 Mondays 10:00 UTC, week 4 pre-booked), Studio check query `src/probes/recurring/sql/check.sql`, implementations in `src/services/supabase/recurring/`.
-Status: stage 1 (split, committed) and stage 2 (rpc: `book_recurring` in migration `20261012071039_recurring_bookings_rpc.sql`, RLS proof `src/probes/recurring/sql/rpc-rls-proof.sql`) done. Stage 3 (edge) next. Guests are **anonymous** (role `anon`), as in the core app.
+Status: all 3 stages done. Stage 2 = `book_recurring` (migration `20261012071039_recurring_bookings_rpc.sql`, proof `src/probes/recurring/sql/rpc-rls-proof.sql`). Stage 3 = Edge Function `supabase/functions/book-recurring/` (direct connection as `postgres`, verifies apikey/JWT itself, `set_config('role')` + `request.jwt.claims` per transaction so RLS applies; `verify_jwt = false` in config.toml). Local: `npm run functions:serve` must run for stage 3; proof: `npm run probe:recurring:edge-proof`.
 
 ## Rules for all work on this branch
 

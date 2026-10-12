@@ -112,6 +112,10 @@ async function submit() {
 
     <section v-if="result" class="space-y-2">
       <h2 class="text-lg font-semibold">Result ({{ result.strategy }})</h2>
+      <p v-if="result.ranAs" class="text-xs text-gray-600">
+        Edge Function ran the transaction as database role <code>{{ result.ranAs.role }}</code>,
+        auth.uid() = <code>{{ result.ranAs.uid ?? 'null (anonymous)' }}</code>
+      </p>
       <div v-if="result.ok" class="rounded border border-green-300 bg-green-50 p-3">
         <p class="font-semibold text-green-800">Booked all {{ result.weeks.length }} weeks.</p>
         <p class="text-sm">Series {{ result.seriesId }}</p>

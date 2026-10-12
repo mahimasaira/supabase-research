@@ -3,6 +3,7 @@
 import { supabase } from '@/lib/supabase'
 import { bookRecurringSplit } from './recurring/split'
 import { bookRecurringRpc } from './recurring/rpc'
+import { bookRecurringEdge } from './recurring/edge'
 
 // ---- slots ----
 export async function getHostProfile(hostId) {
@@ -30,7 +31,7 @@ export async function listFreeSlots(hostId) {
 export const recurringStrategies = [
   { id: 'split', label: 'Stage 1: separate browser calls', ready: true },
   { id: 'rpc', label: 'Stage 2: Postgres function (rpc)', ready: true },
-  { id: 'edge', label: 'Stage 3: Edge Function (direct connection)', ready: false },
+  { id: 'edge', label: 'Stage 3: Edge Function (direct connection)', ready: true },
 ]
 
 // input: { hostId, firstSlot: { starts_at }, weeks, guestName, guestEmail }
@@ -41,6 +42,7 @@ export async function bookRecurring(input, { strategy = 'split' } = {}) {
   switch (strategy) {
     case 'split': return bookRecurringSplit(supabase, input)
     case 'rpc': return bookRecurringRpc(supabase, input)
+    case 'edge': return bookRecurringEdge(supabase, input)
     default: throw new Error(`Recurring strategy "${strategy}" is not built yet`)
   }
 }

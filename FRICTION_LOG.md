@@ -199,3 +199,43 @@ A guest books the same weekly slot for N weeks: one `booking_series` row + one b
 - **Surprising:** How small the browser side became: one call, no loop, no cleanup. And that a correct transaction **blocks** under contention (the guest's request waited for the other one), which is right but invisible until you test concurrency.
 - **Time spent:** ~40 min
 - **Backend needed?** **No** for atomic multi-table writes: a Postgres function is enough, as long as everything happens inside the database. It stops being enough if a step must call the outside world mid-transaction (payment, e-signature: features 4 and later), or if you want the logic in application code. Stage 3 tests that alternative.
+
+## Stage 3: Edge Function with a direct Postgres connection (BEGIN/COMMIT/ROLLBACK)
+- **Step:** Advanced 1, stage 3
+- **What happened:** `supabase/functions/book-recurring/index.ts` (Deno/TypeScript) opens a direct Postgres connection (`postgres` npm package, `SUPABASE_DB_URL`), reserves one connection and runs `BEGIN` → series → per week: find slot, insert booking → `COMMIT`, or `ROLLBACK` on any clash. The browser calls it with `supabase.functions.invoke('book-recurring', …)`. Proof script `npm run probe:recurring:edge-proof`: **17/17 checks pass**:
+  - **Identity verified before any database access:** no apikey, an unknown apikey, and forged ES256/HS256 tokens claiming `service_role` → all **401**, nothing written.
+  - **Anonymous guest:** week-4 clash → **409, 0 series, 0 bookings**; ran as role `anon`, `auth.uid()` null. "Only 2 weeks available" → 422.
+  - **Logged-in user:** booked, and inside the transaction `current_user = authenticated` and `auth.uid()` = that user's id.
+  - **RLS enforced:** a past slot is visible to the `postgres` connection but not to `anon`. Booking it through the function → "week 1 not available"; the slot stays free. "No past bookings" is a rule only RLS enforces (no constraint), so this shows the role switch works.
+  - **Race:** a concurrent booking of week 3 → the function waited ~1.6 s, reported "week 3 just taken", rolled back weeks 1–2.
+- **The big trap: a direct connection is `postgres`, the owner, which bypasses RLS.** Every query would silently ignore every policy. Supabase doesn't warn about this. To get RLS back, the function must do by hand what PostgREST does for every API request: `set_config('role', 'anon' | 'authenticated', true)` and `set_config('request.jwt.claims', <claims>, true)` at the start of **each** transaction (the `true` = transaction-local, so the next request on the same connection doesn't inherit it). Forget either and it still "works", just without RLS, or with `auth.uid()` = null.
+- **Verifying the caller is your job, and the built-in check doesn't do it.** Findings (local CLI 2.120):
+  - A guest has **no JWT**. With the new keys supabase-js sends the publishable key (`sb_publishable_…`) as the bearer token, not a JWT.
+  - The built-in `verify_jwt` rejects a malformed token, but **lets through the publishable key or no `Authorization` header at all**, so it doesn't establish an identity. `supabase functions new` already scaffolds `verify_jwt = false`.
+  - The function therefore checks: apikey ∈ `SUPABASE_PUBLISHABLE_KEYS`; publishable key (or no) bearer → `anon`; otherwise `auth.getClaims(token)` (ES256 signature checked against the project's JWKS; HS256 or unknown keys fall back to asking the Auth server) and only `anon`/`authenticated` roles are accepted. A legitimately signed `service_role` token is refused (403), because it would bypass RLS.
+  - The new `@supabase/server` helper (`withSupabase({ auth: … })`, which the CLI template now uses) can validate keys and JWTs, but the client it hands you is the normal HTTP API client, so it **can't** run BEGIN/COMMIT across statements. Not used.
+- **Local dev needs a second process.** `supabase start` runs the Edge runtime but doesn't serve new functions; `npm run functions:serve` (`supabase functions serve`) must run in its own terminal. Its hot reload briefly answers 503 `name resolution failed` right after a file save.
+- **Error bodies are awkward on the client.** On any non-2xx response, `functions.invoke` returns a generic `FunctionsHttpError` ("Edge Function returned a non-2xx status code"); the JSON body (which week clashed) must be read from `error.context` (the raw `Response`).
+- **Logic now exists in three places.** The week maths and "weeks offered" check live in `split.js`, the SQL function and the Edge Function (TypeScript, but a Deno function can't simply import the Vue app's `src/` files). The NestJS version will be a fourth.
+- **Hosted-only concerns (not tested locally):** connection limits. Each function instance holds its own Postgres connection, so hosted projects should use the transaction pooler (port 6543; the code already sets `prepare: false` for it). Plus cold starts, and the function must handle CORS itself (locally the gateway answered the preflight).
+- **Code:** function 146 lines + `deno.json` 7, client `edge.js` 29, services index 4, page 4 (shows the role the transaction ran as), `config.toml` 11 (generated), proof script 109, 2 npm scripts. 9 files, ~314 lines.
+- **Testing / debugging:** The best of the three for *writing* the logic: ordinary TypeScript, `console.log` shows in the `functions serve` terminal, readable try/catch around the transaction. The hardest to *trust*: everything security-related (who is calling, which role, whether RLS applies) is now hand-written code that has to be proven with tests. Nothing fails visibly if it's wrong.
+- **Surprising:** It worked on the first call. The time went into finding out what the gateway actually sends and checks (two throwaway echo functions), which isn't clear from the docs with the new key types.
+- **Time spent:** ~60 min
+- **Backend needed?** **This *is* a small backend**, just hosted by Supabase. It's worth it when the transaction must sit next to application code: calling an external API between steps (payments, e-signature, feature 4), or keeping complex rules in TypeScript. The price is re-implementing what PostgREST gives for free: authentication, role switching, error mapping, CORS, connection handling.
+
+### Recurring bookings: the three stages compared
+
+| | Stage 1: split calls | Stage 2: Postgres function | Stage 3: Edge Function |
+|---|---|---|---|
+| All-or-nothing | ❌ series + weeks 1–3 left behind | ✅ | ✅ |
+| Where the logic lives | browser JS | PL/pgSQL in a migration | TypeScript (Deno) on Supabase |
+| Requests per booking | 1 + 2N (13 for 6 weeks) | 1 | 1 |
+| RLS inside | ✅ (normal API) | ✅ `SECURITY INVOKER` | ✅ only because the function switches role itself |
+| Auth handled by | Supabase | Supabase | **your code** |
+| Race (concurrent booking) | partial writes | waits, rolls back | waits, rolls back |
+| Can call an external API mid-transaction | — | ❌ | ✅ |
+| New lines (approx.) | ~485 incl. setup | ~179 | ~314 |
+| Hardest part | noticing the problem at all | raise-don't-return, invoker vs definer trade-off | identity + RLS on a superuser connection |
+
+**For the blog:** Supabase handles multi-table transactions without a custom server, via a Postgres function. A server (an Edge Function counts) only becomes necessary when the transaction has to include something outside the database. Even then the database stays the place where atomicity happens; the server just has to be careful not to switch RLS off on the way in.
