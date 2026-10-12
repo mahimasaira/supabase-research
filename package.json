@@ -17,6 +17,7 @@
     "probe:recurring:edge-proof": "node --env-file=.env.local src/probes/recurring/edge-proof.mjs",
     "probe:audit:seed": "npm run -s probe:recurring:seed && psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -f src/probes/audit/sql/seed.sql",
     "probe:audit:proof": "node --env-file=.env.local src/probes/audit/proof.mjs",
+    "probe:audit:proof:triggers": "node --env-file=.env.local src/probes/audit/proof-triggers.mjs",
     "test:clean": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \"delete from auth.users where email like '%@test.dev'\""
   },
   "dependencies": {

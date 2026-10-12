@@ -103,6 +103,10 @@ async function forge() {
         Every action is two requests: the action, then a log entry. Reset: <code>npm run probe:audit:seed</code>.
         Compare reality with the log: <code>src/probes/audit/sql/check.sql</code> in Studio.
       </p>
+      <p class="text-sm text-gray-600">
+        Stage 2: every action here is ALSO logged by database triggers (table <code>audit_log</code>), whatever the
+        options say. Compare both logs: <code>src/probes/audit/sql/check-triggers.sql</code>.
+      </p>
     </div>
 
     <section class="space-y-2 rounded border p-4">

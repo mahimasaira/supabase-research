@@ -263,3 +263,25 @@ Probe page: `/probes/audit`, reset: `npm run probe:audit:seed`, proof: `npm run 
 - **Surprising:** How *normal* the failing code looks: "do it, then log it" is what most tutorials show. And that even the easy case (a guest's own booking) can't produce a complete entry, because RLS hides the new row's id from its own creator.
 - **Time spent:** ~45 min
 - **Backend needed?** Not yet decided. The problems come from logging in a *separate request from an untrusted client*. Stage 2 moves logging into database triggers (same transaction, no client grants); the NestJS comparison would put it in server code (interceptor/service), which has the "other paths" problem for anything that bypasses the server (Studio, migrations, scripts).
+
+## Stage 2: database triggers make the log complete and tamper-proof
+- **Step:** Advanced 2, stage 2
+- **What happened:** One PL/pgSQL trigger function (`audit_row_change`) on `bookings`, `slots`, `booking_series` and `profiles` writes `audit_log` after every insert/update/delete, in the same transaction as the change. Clients have **no** insert/update/delete rights on `audit_log`; hosts read entries about them (RLS). Proof script `npm run probe:audit:proof:triggers`: **21/21 checks**. Every stage 1 problem is gone:
+  1. **Skipping:** a direct API booking with no logging code → logged, with the **real booking id** (stage 1 couldn't know it), the host, actor `anon`, masked email, no cancel token.
+  2. **Other paths:** rpc (recurring + guest cancel), Edge Function (direct connection), host actions, Studio → all logged. The Edge Function entries carry the caller's identity (`anon`, or the logged-in user's id) because stage 3 of feature 1 sets the JWT claims; without that, they'd show up as `postgres`.
+  3. **Forging:** guests and hosts get `42501` inserting into `audit_log`; the trigger function can't be called as an rpc.
+  4./5. **Out of sync:** impossible. A failed booking leaves no entry, and the recurring rpc that clashes in week 4 leaves **0 entries** (the series + weeks 1–3 entries were rolled back with them). A successful 2-week recurring booking gives 3 entries sharing one `tx_id`.
+  Side by side for the same booking with the browser's log request failing: browser log 0 entries, trigger log 1.
+- **How the trigger knows who:** `auth.uid()`/`auth.role()` read the request's JWT claims, a session setting, so they still work inside `SECURITY DEFINER` functions (the trigger itself, and `cancel_booking`, where a guest cancel is still recorded as `anon`).
+- **What triggers can't do:**
+  - **No person for admin changes.** Studio, psql and the secret key have no JWT: entries show the database user (`postgres`, `supabase_auth_admin`) and no id. The log knows *that* something changed, not *who* in your team did it.
+  - **Cascades flood the log.** Deleting the test host wrote 16 entries (profile, 6 slots, 1 booking created and deleted), and the cascaded **booking deletion has no host**: its slot was already gone when the trigger looked it up, so the host can't see that entry.
+  - **Reads aren't logged**, only changes (that would need `pgaudit` to the server log, or logging in an API layer).
+  - **The owner can still erase history.** `postgres` can disable triggers or delete log rows. Protection against admins needs something outside the database (e.g. shipping entries to external storage).
+  - **Logic in SQL again.** Diffing old/new rows, masking emails, naming actions and finding the host: 146 lines of migration, harder to read than the JS equivalent. Changing it means a new migration (I edited this one before committing and used `db reset`, which also wipes local data).
+- **Noise decisions:** a slot update that only flips the derived `is_booked` flag isn't logged (the booking entry already says what happened); empty fields are stripped from created/deleted rows.
+- **Code:** migration 146 lines (table, masking function, trigger function, 4 triggers), proof script 140, Studio comparison SQL 30, seed +6, page +4, 1 npm script. **No app code changed.** Logging no longer depends on any service function.
+- **Testing / debugging:** Easy to verify from outside (every path just shows up in the table), but the trigger itself is only debuggable via `raise notice` or by reading the log rows. A bug in the trigger would make **every** write to those tables fail, so the proof script is essential.
+- **Surprising:** It's the first feature where the Supabase answer is clearly *better* than typical backend code: an API-layer logger (e.g. a NestJS interceptor) would still miss Studio, scripts, migrations and cascades.
+- **Time spent:** ~50 min
+- **Backend needed?** **No.** Triggers are the stronger solution and need no server. A backend would only add value for logging reads, attaching request context (e.g. which admin in a back-office tool), or shipping logs somewhere the database owner can't edit.

@@ -5,3 +5,9 @@
 delete from public.audit_log_client;
 
 select 'OK: audit log emptied' as status, (select count(*) from public.audit_log_client) as audit_log_client_rows;
+
+-- Stage 2: the trigger-written log. Running the recurring seed just now (deleting and
+-- recreating the test host) wrote entries here too; clear them for a clean start.
+delete from public.audit_log;
+
+select 'OK: trigger log emptied' as status, (select count(*) from public.audit_log) as audit_log_rows;
