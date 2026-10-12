@@ -30,6 +30,7 @@ Reset before every manual test: leftovers from earlier runs change the results.
 | `npm run probe:recurring:edge-proof` | `All checks passed` (17) | **yes** |
 | `npm run probe:audit:proof` | `All demos reproduced` (19) | no |
 | `npm run probe:audit:proof:triggers` | `All checks passed` (21, no SKIP) | for section 4 |
+| `npm run probe:audit:compare` | `All checks passed` (11) | no |
 | `psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -f src/probes/recurring/sql/rpc-rls-proof.sql` | part 1: RLS **error**, part 2: success | no |
 | `npm run build` | `✓ built` | no |
 
@@ -102,6 +103,16 @@ await fetch('http://127.0.0.1:54321/rest/v1/audit_log', {
 // → { code: '42501', message: 'permission denied for table audit_log' }
 ```
 
+### Stage 3: supa_audit and pgaudit vs. our triggers
+
+| Do | Expect |
+|---|---|
+| `npm run probe:audit:compare` (~30 s, restarts the local API container twice) | `All checks passed` (11) and a per-action table of what each tool recorded |
+| Studio: `select op, table_name, auth_role, auth_uid, record from audit.record_version order by id` after using the app | supa_audit's entries: full rows incl. email and `cancel_token`, extra `slots UPDATE` per booking |
+| Sign up a new account | works (the supa_audit migration includes the fix that keeps sign-up from failing) |
+
+pgaudit is only on while the compare script runs. To look at it yourself: `docker logs supabase_db_supabase-booking 2>&1 | grep AUDIT` during the run.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
@@ -112,4 +123,5 @@ await fetch('http://127.0.0.1:54321/rest/v1/audit_log', {
 | Edge Function returns 503 right after a file save | hot reload; retry after a second |
 | Stage 3 / edge-proof fails to connect | `functions:serve` isn't running |
 | Results show your host instead of `anon` | you're logged in. Log out to test as a guest |
+| `supabase migration new` hangs | it's waiting for SQL on stdin; run it in a normal terminal, or add `< /dev/null` |
 | Changed a migration that was already applied | `npm run db:reset` re-runs all migrations but **wipes local data**; reseed afterwards |

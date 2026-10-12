@@ -285,3 +285,33 @@ Probe page: `/probes/audit`, reset: `npm run probe:audit:seed`, proof: `npm run 
 - **Surprising:** It's the first feature where the Supabase answer is clearly *better* than typical backend code: an API-layer logger (e.g. a NestJS interceptor) would still miss Studio, scripts, migrations and cascades.
 - **Time spent:** ~50 min
 - **Backend needed?** **No.** Triggers are the stronger solution and need no server. A backend would only add value for logging reads, attaching request context (e.g. which admin in a back-office tool), or shipping logs somewhere the database owner can't edit.
+
+## Stage 3: Supabase's ready-made tools (supa_audit, pgaudit) vs. our triggers
+- **Step:** Advanced 2, stage 3
+- **What happened:** Installed `supa_audit` next to our stage 2 triggers (migration `20261012182300_audit_supa_audit.sql`), and switched on `pgaudit` temporarily (it's a role setting, not schema). `npm run probe:audit:compare` runs the same five actions (guest booking, rolled-back recurring rpc, guest cancel rpc, host deletes a slot, Studio edit) and reads all three logs: **11/11 checks**.
+
+| | Ours (stage 2 triggers) | supa_audit | pgaudit |
+|---|---|---|---|
+| Status | our code | **archived** since Jan 2024, not in the local image | maintained, preloaded in Supabase |
+| Install | 1 migration | copy its SQL + **patch** (see below) | `create extension` + role settings + restart API connections |
+| Where | `audit_log` table | `audit.record_version` table | Postgres **server log** (local: `docker logs`; hosted: Dashboard → Logs, retention per plan) |
+| Who: guest | `anon` | `anon` | only `authenticator` (the API's shared DB user) |
+| Who: host | host's user id | host's user id | only `authenticator` |
+| Who: Studio | `postgres` | nothing | `postgres` |
+| Values | changed fields, from → to | **full** old + new row | none for API calls (`<not logged>`); literal values for SQL typed in Studio |
+| Rolled-back changes | not recorded | not recorded | **recorded**, no marker that they were undone |
+| One guest booking | 1 entry | 2 (+ the `is_booked` flag update) | 9 lines (incl. our trigger's and Realtime's internal statements) |
+| Secrets | email masked, no cancel token | **cancel token + full email copied** | API values not logged |
+| Readable in the app | yes, host's own entries (RLS) | no (schema not exposed) | no |
+| Reads logged | no | no | yes (needed anyway, see below) |
+
+- **supa_audit, as published, broke every sign-up.** Its trigger looks up `uuid_generate_v4/v5` through the *caller's* `search_path`; Supabase installs them in `extensions`, and `handle_new_user()` (creates the profile on sign-up) runs with an empty `search_path`. Result: `500 "Database error saving new user"`, and our seed script failed too. Nothing in the install pointed at the cause; the Postgres log did. Fixed with a 2-line patch (pin the functions' `search_path`), reproduced in the compare script inside a rolled-back transaction. Its two `pg_extension_config_dump` calls also had to be removed (only valid inside `CREATE EXTENSION`). Its functions were executable by `PUBLIC` (harmless here only because `anon` has no access to the `audit` schema); revoked.
+- **supa_audit got "who" right.** When it detects Supabase it adds `auth_uid`/`auth_role` columns from the JWT. The README's example doesn't show them; only the install script does. I first assumed it couldn't record who, and was wrong.
+- **pgaudit and the API:** with `pgaudit.log = 'write'`, API writes are **not logged at all**: PostgREST sends them as `WITH … INSERT … SELECT`, which pgaudit classifies as a *read*. Only `'read, write'` captures them, which also logs every read. Role settings reach the API only after its pooled connections reconnect (restart the API container). `postgres` can't enable `pgaudit.log_parameter` (permission denied), so values of API calls stay `<not logged>`.
+- **Verdict:** for an in-app audit trail (who did what, readable by the host), our ~150-line trigger is the best of the three. supa_audit is a decent generic *change history* (full rows, stable record ids) but is unmaintained, needed a patch to not break sign-up, and stores secrets and personal data unfiltered. pgaudit answers a different question ("which SQL ran on this server?"), useful for compliance and debugging, not for showing users a history.
+- **Other friction:** `supabase migration new <name>` waits for input when it isn't run in an interactive terminal (it reads the migration's SQL from stdin): it created an empty file and hung until killed; pass `< /dev/null`. During testing the local Edge Function endpoint once stopped answering for a few minutes and recovered without changes; cause unclear. The audit proof now times out after 5 s instead of waiting forever.
+- **Code:** supa_audit migration 323 lines (~290 vendored + header, patch, tracking), compare script 169, seed +5, proof timeout 1 line, 1 npm script. 5 files, ~500 lines. No app code changed.
+- **Testing / debugging:** supa_audit: easy to inspect (it's a table), hard to diagnose when it breaks *something else* (sign-up failed with a generic 500). pgaudit: slow loop (role settings + API restart + reading container logs), output is raw SQL text, and the noise (internal statements of triggers and functions) makes finding one action hard.
+- **Surprising:** that the "official" auditing tool broke authentication on install, and that pgaudit can't see writes from Supabase's own API without logging all reads.
+- **Time spent:** ~90 min (incl. the revert/redo and the pgaudit investigation)
+- **Backend needed?** **No.** None of the three needs a server. A backend would only help with "who" for pgaudit-style SQL logs (it knows the user, the database doesn't) and with shipping logs somewhere the database owner can't edit.

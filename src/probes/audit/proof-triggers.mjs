@@ -65,7 +65,7 @@ const { error: takenErr } = await anon.from('bookings').insert({ slot_id: slotAt
 check('a failed booking (week 4 taken) leaves no entry', takenErr && n(`audit_log where changes->>'guest_name' = 'Too Late'`) === 0, JSON.stringify(takenErr))
 
 console.log('\n# 4. Edge Function path (direct connection), identity included')
-const fnUp = await fetch(`${url}/functions/v1/book-recurring`, { method: 'OPTIONS' }).then((r) => r.ok).catch(() => false)
+const fnUp = await fetch(`${url}/functions/v1/book-recurring`, { method: 'OPTIONS', signal: AbortSignal.timeout(5000) }).then((r) => r.ok).catch(() => false)
 if (!fnUp) {
   console.log('SKIP  functions serve is not running (npm run functions:serve)')
 } else {

@@ -11,3 +11,8 @@ select 'OK: audit log emptied' as status, (select count(*) from public.audit_log
 delete from public.audit_log;
 
 select 'OK: trigger log emptied' as status, (select count(*) from public.audit_log) as audit_log_rows;
+
+-- Stage 3: supa_audit's table (if installed).
+do $$ begin
+  if to_regclass('audit.record_version') is not null then truncate audit.record_version; end if;
+end $$;
