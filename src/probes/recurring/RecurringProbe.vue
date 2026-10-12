@@ -138,6 +138,10 @@ async function submit() {
           </p>
           <p class="text-xs text-gray-600">The guest was told "nothing was booked". Run check.sql in Studio to see it.</p>
         </div>
+        <div v-else-if="result.strategy !== 'split' && result.clash" class="rounded border border-green-300 bg-green-50 p-3 text-sm">
+          <p class="font-semibold text-green-800">Rolled back as one transaction: weeks before {{ result.clash.week }} were undone too.</p>
+          <p class="text-xs text-gray-600">The guest can't read bookings back, so confirm with check.sql in Studio: no new series should appear.</p>
+        </div>
       </template>
     </section>
   </div>

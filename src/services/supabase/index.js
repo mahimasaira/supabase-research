@@ -2,6 +2,7 @@
 // never from here. All supabase-js calls on this branch live under src/services/supabase/.
 import { supabase } from '@/lib/supabase'
 import { bookRecurringSplit } from './recurring/split'
+import { bookRecurringRpc } from './recurring/rpc'
 
 // ---- slots ----
 export async function getHostProfile(hostId) {
@@ -28,7 +29,7 @@ export async function listFreeSlots(hostId) {
 // Three ways to do the same thing, so the probe page can compare them.
 export const recurringStrategies = [
   { id: 'split', label: 'Stage 1: separate browser calls', ready: true },
-  { id: 'rpc', label: 'Stage 2: Postgres function (rpc)', ready: false },
+  { id: 'rpc', label: 'Stage 2: Postgres function (rpc)', ready: true },
   { id: 'edge', label: 'Stage 3: Edge Function (direct connection)', ready: false },
 ]
 
@@ -39,6 +40,7 @@ export const recurringStrategies = [
 export async function bookRecurring(input, { strategy = 'split' } = {}) {
   switch (strategy) {
     case 'split': return bookRecurringSplit(supabase, input)
+    case 'rpc': return bookRecurringRpc(supabase, input)
     default: throw new Error(`Recurring strategy "${strategy}" is not built yet`)
   }
 }
