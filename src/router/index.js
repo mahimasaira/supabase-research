@@ -12,6 +12,8 @@ const router = createRouter({
     // Public pages: no auth needed, and logged-in hosts can open them too.
     { path: '/book/:hostId', name: 'book', component: () => import('@/views/BookView.vue') },
     { path: '/cancel/:token', name: 'cancel', component: () => import('@/views/CancelView.vue') },
+    // Probe pages (blog experiments). Public, because the guest under test is anonymous.
+    { path: '/probes/recurring', name: 'probe-recurring', component: () => import('@/probes/recurring/RecurringProbe.vue') },
   ],
 })
 
