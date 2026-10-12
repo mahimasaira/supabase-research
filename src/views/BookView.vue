@@ -124,6 +124,7 @@ async function book() {
   rememberGuestBooking(entry)
   myBookings.value = loadGuestBookings()
   confirmation.value = { ...entry, cancelUrl: `${window.location.origin}/cancel/${cancelToken}` }
+  refreshStatuses() // learns whether this host requires a signature
   selected.value = null
   guestName.value = ''
   guestEmail.value = ''
@@ -140,7 +141,9 @@ const cancelMessage = ref('')
 // Guests can't read bookings, so ask the get_booking_statuses RPC about the
 // cancel tokens this browser holds. Token → 'confirmed' | 'cancelled' | 'missing'.
 const statuses = ref({})
-const isActive = (b) => (statuses.value[b.cancelToken] ?? 'confirmed') === 'confirmed'
+// 'pending_signature' (feature 4): the slot is held until the guest signs the agreement.
+const isActive = (b) => ['confirmed', 'pending_signature'].includes(statuses.value[b.cancelToken] ?? 'confirmed')
+const awaitingSignature = (b) => statuses.value[b.cancelToken] === 'pending_signature'
 
 async function refreshStatuses() {
   const tokens = myBookingsHere.value.map((b) => b.cancelToken)
@@ -187,7 +190,10 @@ async function cancel(b) {
 
     <div v-if="confirmation" class="space-y-1 rounded border border-green-300 bg-green-50 p-3">
       <p class="font-semibold text-green-800">
-        Booked: {{ formatSlot({ starts_at: confirmation.startsAt, ends_at: confirmation.endsAt }) }}
+        {{ awaitingSignature(confirmation) ? 'Held for you' : 'Booked' }}: {{ formatSlot({ starts_at: confirmation.startsAt, ends_at: confirmation.endsAt }) }}
+      </p>
+      <p v-if="awaitingSignature(confirmation)" class="text-sm text-amber-800">
+        This host needs a signed agreement. Check your email and sign it to confirm the booking.
       </p>
       <p class="text-sm">
         Keep this link to cancel from any device:
@@ -201,6 +207,7 @@ async function cancel(b) {
         <li v-for="b in myBookingsHere" :key="b.cancelToken" class="flex items-center justify-between gap-3 p-3">
           <span :class="{ 'text-gray-400 line-through': !isActive(b) }">
             {{ formatSlot({ starts_at: b.startsAt, ends_at: b.endsAt }) }}
+            <span v-if="awaitingSignature(b)" class="ml-2 text-sm text-amber-700">Awaiting your signature</span>
           </span>
           <button v-if="isActive(b)" class="text-sm text-red-700 underline" @click="cancel(b)">Cancel</button>
           <span v-else class="flex items-center gap-3 text-sm">

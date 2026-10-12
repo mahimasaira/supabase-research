@@ -74,3 +74,18 @@ export const logAuditEventFromClient = (entry) => clientAudit.logEvent(supabase,
 // opts: { hostId, kind: 'all' | 'bookings' | 'slots' | 'profile', limit, cursor }
 // result: { entries, nextCursor } (nextCursor null on the last page)
 export const listAuditHistory = (opts) => auditHistory.listAuditHistory(supabase, opts)
+
+// ---- DocuSign (feature 4), stage 1: the host's "require a signed agreement" setting ----
+export async function getSignatureRequirement(hostId) {
+  const { data, error } = await supabase.from('profiles').select('require_signature').eq('id', hostId).single()
+  if (error) throw error
+  return data.require_signature
+}
+
+export async function setSignatureRequirement(hostId, required) {
+  // .select() so an RLS-filtered update (0 rows, no error) is noticed.
+  const { data, error } = await supabase.from('profiles').update({ require_signature: required }).eq('id', hostId).select('require_signature')
+  if (error) throw error
+  if (data.length === 0) throw new Error('Setting not saved (not your profile?)')
+  return data[0].require_signature
+}

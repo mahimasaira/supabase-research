@@ -23,7 +23,7 @@ The same booking app is built twice, sharing one Vue frontend:
 1. Recurring bookings & transactions (done)
 2. Audit log (done)
 3. Spam protection (rate limiting for anonymous bookings)
-4. Third-party integration with webhooks: e-signature with **DocuSign** (demo account; JWT grant verified with `scripts/docusign-check.mjs`, values in `.env.local`, private key `docusign_private.key` git-ignored; not designed yet)
+4. Third-party integration with webhooks: e-signature with **DocuSign** (demo account; JWT grant verified with `scripts/docusign-check.mjs`, values in `.env.local`, private key `docusign_private.key` git-ignored). In progress: host opt-in (`profiles.require_signature`), signing by email, webhooks tested with simulated messages + status-check fallback. Stage 1 done: `pending_signature` booking state holds the slot (migration `20261012220021_docusign_pending_signature.sql`, `src/features/docusign/`, `npm run probe:docusign:proof:pending`). Next: stage 2 sending (Edge Function), 3 webhook + status check, 4 failure cases.
 5. Bulk reminders
 6. Weekly availability & time zones
 

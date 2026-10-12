@@ -6,6 +6,7 @@ import { friendlyError } from '@/lib/errors'
 import { formatSlot } from '@/lib/format'
 import { useSlotChannel } from '@/composables/useSlotChannel'
 import ProfileCard from '@/components/ProfileCard.vue'
+import SignatureSetting from '@/features/docusign/SignatureSetting.vue'
 
 const { user } = useAuth()
 
@@ -44,7 +45,8 @@ const allBookings = computed(() =>
     .flatMap((s) => s.bookings.map((b) => ({ ...b, slot: s })))
     .sort((a, b) => b.created_at.localeCompare(a.created_at)),
 )
-const confirmedBooking = (slot) => slot.bookings.find((b) => b.status === 'confirmed')
+// A booking waiting for the guest's signature (feature 4) holds the slot too.
+const activeBooking = (slot) => slot.bookings.find((b) => b.status === 'confirmed' || b.status === 'pending_signature')
 
 // ---- create slot ----
 const start = ref('')
@@ -91,7 +93,7 @@ async function cancelBooking(booking) {
     .from('bookings')
     .update({ status: 'cancelled' })
     .eq('id', booking.id)
-    .eq('status', 'confirmed')
+    .in('status', ['confirmed', 'pending_signature'])
     .select('id')
   if (err) error.value = friendlyError(err)
   else if (data.length === 0) error.value = 'That booking was already cancelled.'
@@ -110,6 +112,7 @@ async function cancelBooking(booking) {
     </section>
 
     <ProfileCard :user-id="user.id" />
+    <SignatureSetting :user-id="user.id" />
 
     <p v-if="error" class="rounded bg-red-50 p-2 text-red-700">{{ error }}</p>
 
@@ -142,12 +145,15 @@ async function cancelBooking(booking) {
         <li v-for="slot in upcomingSlots" :key="slot.id" class="flex items-center gap-3 p-3">
           <div class="flex-1">
             <div>{{ formatSlot(slot) }}</div>
-            <div v-if="confirmedBooking(slot)" class="text-sm text-green-700">
-              Booked by {{ confirmedBooking(slot).guest_name }} ({{ confirmedBooking(slot).guest_email }})
+            <div v-if="activeBooking(slot)?.status === 'pending_signature'" class="text-sm text-amber-700">
+              Awaiting signature from {{ activeBooking(slot).guest_name }} ({{ activeBooking(slot).guest_email }})
+            </div>
+            <div v-else-if="activeBooking(slot)" class="text-sm text-green-700">
+              Booked by {{ activeBooking(slot).guest_name }} ({{ activeBooking(slot).guest_email }})
             </div>
             <div v-else class="text-sm text-gray-500">Free</div>
           </div>
-          <button v-if="confirmedBooking(slot)" class="text-sm underline" @click="cancelBooking(confirmedBooking(slot))">
+          <button v-if="activeBooking(slot)" class="text-sm underline" @click="cancelBooking(activeBooking(slot))">
             Cancel booking
           </button>
           <button v-else class="text-sm text-red-700 underline" @click="deleteSlot(slot)">Delete</button>
@@ -162,7 +168,7 @@ async function cancelBooking(booking) {
         <li v-for="b in allBookings" :key="b.id" class="p-3 text-sm">
           <div class="flex justify-between gap-3">
             <span><strong>{{ b.guest_name }}</strong> · {{ b.guest_email }}</span>
-            <span :class="b.status === 'confirmed' ? 'text-green-700' : 'text-gray-500'">{{ b.status }}</span>
+            <span :class="{ confirmed: 'text-green-700', pending_signature: 'text-amber-700' }[b.status] ?? 'text-gray-500'">{{ b.status === 'pending_signature' ? 'awaiting signature' : b.status }}</span>
           </div>
           <div class="text-gray-500">{{ formatSlot(b.slot) }}</div>
         </li>

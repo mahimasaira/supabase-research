@@ -344,3 +344,22 @@ Probe page: `/probes/audit`, reset: `npm run probe:audit:seed`, proof: `npm run 
 | Effort | small JS, but every path must call it | ~150 lines SQL | vendor + patch (broke sign-up) | role settings + API restart |
 
 **For the blog:** an audit log is where Supabase does *better* than typical backend code. Database triggers see every change from every path, in the same transaction, and RLS makes them readable per host with no extra code. A NestJS interceptor would still miss Studio, scripts, migrations and cascades. The two "official" tools didn't fit: `supa_audit` is archived and broke sign-up as published; `pgaudit` answers "which SQL ran", not "who did what". **Total feature time: ~4 h (4 stages).**
+
+---
+
+# Advanced feature 4: third-party integration (DocuSign e-signature)
+
+A host can require a **signed agreement**: new bookings on their page wait for the guest's signature (DocuSign, by email) before they're confirmed. Decisions: host opt-in (other hosts unchanged), signing by email (works for anonymous guests), webhooks tested with simulated DocuSign messages plus a "check status with DocuSign" fallback (DocuSign can't reach `localhost`, and no tunnel is installed). Setup verified beforehand with `scripts/docusign-check.mjs` (JWT grant, demo account).
+
+Planned stages: 1. bookings that wait for a signature (no DocuSign yet), 2. sending the agreement (Edge Function), 3. receiving the result (webhook Edge Function + status check), 4. failure cases (DocuSign down, declined, never signed, cancelled after sending).
+
+## Stage 1: bookings that wait for a signature
+- **Step:** Advanced 4, stage 1
+- **What happened:** `profiles.require_signature` (host setting, checkbox on the Dashboard); booking status `pending_signature` plus columns for the integration (`signature_status`, `envelope_id`, `signature_error`, `signature_updated_at`). A `BEFORE INSERT` trigger turns a new booking on an opt-in host's page into `pending_signature`; clients can't send a status, so nobody can skip it. A waiting booking **holds the slot**. Proof `npm run probe:docusign:proof:pending`: **15/15**: hosts without opt-in unchanged; slot held and hidden; second booking rejected; guest and host can't confirm or mark it signed; guest (rpc) and host can cancel it; recurring bookings wait per week; switching off affects only new bookings. Core RLS suite still 60/60.
+- **The integration reaches into the core.** A new state isn't additive. The double-booking index (`status = 'confirmed'`), the `is_booked` trigger, the host's cancel policy and the `cancel_booking` rpc all hard-coded `'confirmed'` and had to be replaced. The core pages had to change as well: the guest's page treated anything not `confirmed` as **cancelled** (struck through), and the Dashboard showed a waiting booking's slot as **free** with a "Delete" button that RLS would then silently refuse. 8 changed lines in `BookView.vue`, 10 in `DashboardView.vue` (they still call supabase directly, as listed in CLAUDE.md).
+- **Who decides the status:** a trigger, not the client and not RLS. RLS can only *reject* rows; it can't change a value, so "your booking starts as pending" needs `BEFORE INSERT`. Status columns have no client grants, so a guest sending `status: 'confirmed'` gets `42501`.
+- **Code:** migration 122 lines, Dashboard setting component 47, services 16, core pages ~20 changed lines, proof 93. 9 files, ~300 lines.
+- **Testing / debugging:** Easy. Everything is database rules, testable with a guest and a host client. The regression suite mattered most here, because core rules were replaced.
+- **Surprising:** how many places a "simple" new status touched: 4 database objects and 2 pages, all of which silently did the wrong thing until updated.
+- **Time spent:** ~45 min
+- **Backend needed?** Not for this stage (pure database). Sending and receiving (stages 2–3) need the private key and a public webhook URL, so server-side code (Edge Functions).

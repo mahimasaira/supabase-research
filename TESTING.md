@@ -129,6 +129,28 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | Filter "Slots" / "Bookings" / "Profile" | only those entries |
 | Log in as another account, open History | "Nothing yet." (only their own sign-up at most) |
 
+## Feature 4: DocuSign e-signature
+
+| Do | Expect |
+|---|---|
+| `node --env-file=.env.local scripts/docusign-check.mjs` | 4 PASS lines + account name (DocuSign setup works) |
+| `npm run probe:docusign:proof:pending` | `All checks passed` (15) |
+
+### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
+
+Seed (`npm run probe:recurring:seed`), log in as the test host:
+
+| Do | Expect |
+|---|---|
+| Dashboard: tick **Require a signed agreement** | stays ticked after reload |
+| Log out, book a slot on `/book/11111111-1111-4111-8111-111111111111` | green box "**Held for you**: …" + "Check your email and sign it…"; in "Your bookings": "Awaiting your signature" |
+| Same page, other browser/tab | that slot is no longer offered |
+| Log in as host, Dashboard | slot shows "**Awaiting signature from** …" (amber); All bookings: "awaiting signature" |
+| Host: Cancel booking (or guest: Cancel / cancel link) | booking cancelled, slot free again |
+| Untick the setting, book another slot as a guest | "Booked: …" (confirmed straight away) |
+
+No email arrives yet: sending the agreement is stage 2.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
