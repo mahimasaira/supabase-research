@@ -239,3 +239,27 @@ A guest books the same weekly slot for N weeks: one `booking_series` row + one b
 | Hardest part | noticing the problem at all | raise-don't-return, invoker vs definer trade-off | identity + RLS on a superuser connection |
 
 **For the blog:** Supabase handles multi-table transactions without a custom server, via a Postgres function. A server (an Edge Function counts) only becomes necessary when the transaction has to include something outside the database. Even then the database stays the place where atomicity happens; the server just has to be careful not to switch RLS off on the way in.
+
+---
+
+# Advanced feature 2: audit log
+
+A permanent record of who changed what, and when: bookings (create/cancel), slots (create/move/delete), booking series, profiles. Decisions: actor = user id + role from the JWT (guests: role `anon`, no id), no IP addresses, only changed fields, guest emails masked, no secrets (`cancel_token`). Hosts read entries about their own slots; nobody edits or deletes entries. Sign-in events are not logged here: Supabase Auth keeps its own auth logs (Dashboard → Logs), outside the app's database tables.
+Probe page: `/probes/audit`, reset: `npm run probe:audit:seed`, proof: `npm run probe:audit:proof`.
+
+## Stage 1: logging from the browser can't be trusted
+- **Step:** Advanced 2, stage 1
+- **What happened:** Each action (guest books, guest cancels, host cancels, host deletes a slot) does the action and then inserts an entry into `audit_log_client` (two requests). The proof script reproduces all five problems from the plan (18/18 checks):
+  1. **Skipping:** the same booking sent directly with supabase-js (what anyone can do from devtools) → a real booking, **no log entry**.
+  2. **Other paths:** a recurring booking via rpc (2 bookings + series), a profile edit in Studio, and the seeded "Someone Else" booking → **no entries**. The existing booking and cancel pages don't log either. Every code path, current and future, must remember to call the logger.
+  3. **Forging:** an anonymous guest writes "host deleted slot (week 3)" → **accepted**; the slot still exists. Guests must have INSERT on the log for browser logging to work at all, and the database can't check that the described action happened.
+  4. **Act, then the log request fails:** the booking is saved and the log has no entry.
+  5. **Log first, then the action fails:** the log says "booking created" for week 4 (already taken), and **no such booking exists**.
+- **What did work:** the *who* can't be faked. `actor_id`/`actor_role` are column defaults from the JWT (`auth.uid()`, `auth.role()`) and clients get no grant on those columns (`42501` when trying). Hosts read only entries about them (RLS); nobody can edit or delete entries (no UPDATE/DELETE grants → `42501`).
+- **Guests can't even say what they changed.** Guests have no SELECT on `bookings`, so the browser never learns the id of the booking it just created: the entry can only reference the slot. A guest cancel (via the `cancel_booking` rpc, by token) has the same problem, and the token itself is a secret that must not go into the log.
+- **Studio's check is the only reliable view.** `sql/check.sql` compares reality with the log in both directions (bookings with no entry; entries with no booking or a slot that still exists). Nothing in the app can do that comparison, because guests can't read either table.
+- **Code:** migration 49 lines, `clientLog.js` 117 (masking, two orderings, 4 actions), services index +22/6, probe page 173, proof script 93, check + seed SQL 49, router 1, 2 npm scripts. 11 files, ~520 lines incl. CLAUDE.md (10).
+- **Testing / debugging:** Easy to demonstrate, because every problem is deterministic. The problems are invisible from the app: the page itself says "logged" for forged entries. Only an owner-level comparison (Studio/psql) shows the gaps.
+- **Surprising:** How *normal* the failing code looks: "do it, then log it" is what most tutorials show. And that even the easy case (a guest's own booking) can't produce a complete entry, because RLS hides the new row's id from its own creator.
+- **Time spent:** ~45 min
+- **Backend needed?** Not yet decided. The problems come from logging in a *separate request from an untrusted client*. Stage 2 moves logging into database triggers (same transaction, no client grants); the NestJS comparison would put it in server code (interceptor/service), which has the "other paths" problem for anything that bypasses the server (Studio, migrations, scripts).

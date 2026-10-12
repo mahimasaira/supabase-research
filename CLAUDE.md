@@ -41,6 +41,16 @@ The earlier "3-step split booking" transactions probe (`src/probes/transactions/
 Where things are: migration `supabase/migrations/20261009212046_recurring_bookings.sql`, probe page `/probes/recurring` (`src/probes/recurring/`), seed/reset `npm run probe:recurring:seed` (test host `recurring-host@test.dev` / `password123`, fixed id `11111111-1111-4111-8111-111111111111`, 6 Mondays 10:00 UTC, week 4 pre-booked), Studio check query `src/probes/recurring/sql/check.sql`, implementations in `src/services/supabase/recurring/`.
 Status: all 3 stages done. Stage 2 = `book_recurring` (migration `20261012071039_recurring_bookings_rpc.sql`, proof `src/probes/recurring/sql/rpc-rls-proof.sql`). Stage 3 = Edge Function `supabase/functions/book-recurring/` (direct connection as `postgres`, verifies apikey/JWT itself, `set_config('role')` + `request.jwt.claims` per transaction so RLS applies; `verify_jwt = false` in config.toml). Local: `npm run functions:serve` must run for stage 3; proof: `npm run probe:recurring:edge-proof`.
 
+### Feature 2 status: audit log (stage 1 done: browser logging, `audit_log_client`, migration `20261012111921_audit_log_client.sql`, page `/probes/audit`, `npm run probe:audit:seed` / `probe:audit:proof`; stage 2 triggers next)
+
+Decisions (agreed 2026-10-12):
+- **Log:** bookings (create/cancel), slots (create/move/delete), booking series, profile changes. Login events are left to Supabase Auth's own logs (note in friction log).
+- **Actor:** user id + role from the JWT; anonymous guests are recorded as role `anon` with no id. No IP addresses (personal data). Never copy secrets (`cancel_token`) into the log.
+- **Content:** only changed fields, guest emails masked (e.g. `g***@example.com`).
+- **Readers:** a host reads entries about their own slots/bookings only (RLS). Nobody can edit or delete entries.
+- **Stages:** 1. log from the browser (show the problem), 2. database triggers, 3. compare with `supa_audit` (not in the local image; only `pgaudit`, which logs to server logs, is available), 4. host history page.
+- Folder `src/probes/audit/`, own migration per stage.
+
 ## Rules for all work on this branch
 
 - **Pages only call functions from `src/services/`** (e.g. `bookSlot()`, `bookRecurring()`), never `supabase` directly. Supabase calls live in `src/services/supabase/`. Later `src/services/nestjs/` provides the same function names, switched with `VITE_BACKEND=supabase|nestjs`.

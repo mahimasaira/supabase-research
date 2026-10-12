@@ -14,6 +14,7 @@ const router = createRouter({
     { path: '/cancel/:token', name: 'cancel', component: () => import('@/views/CancelView.vue') },
     // Probe pages (blog experiments). Public, because the guest under test is anonymous.
     { path: '/probes/recurring', name: 'probe-recurring', component: () => import('@/probes/recurring/RecurringProbe.vue') },
+    { path: '/probes/audit', name: 'probe-audit', component: () => import('@/probes/audit/AuditProbe.vue') },
   ],
 })
 

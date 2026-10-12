@@ -9,4 +9,8 @@ const backend = backends[name]
 if (!backend) throw new Error(`Unknown VITE_BACKEND "${name}". Expected one of: ${Object.keys(backends).join(', ')}`)
 
 export const backendName = name
-export const { getHostProfile, listFreeSlots, recurringStrategies, bookRecurring } = backend
+export const {
+  getHostProfile, listFreeSlots, listHostSlots,
+  recurringStrategies, bookRecurring,
+  bookSlotLogged, cancelAsGuestLogged, cancelAsHostLogged, deleteSlotLogged, logAuditEventFromClient,
+} = backend
