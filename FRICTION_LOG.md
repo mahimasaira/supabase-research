@@ -525,3 +525,29 @@ Planned stages: 1. show the problem (flood script), 2. limits in the database (a
 | Time | ~35 min | ~60 min | ~75 min | ~25 min |
 
 **For the blog:** RLS answers *who* may write, not *how often*, and anonymous guests are indistinguishable. Postgres can enforce limits for every path through the API (with care: atomicity, trusting the right IP header, privacy), but limits alone let an attacker lock out real guests. Telling humans from bots needs a CAPTCHA, which needs a secret and a server-side check (an Edge Function), and most of the work is closing every other way in. Supabase's built-in CAPTCHA only guards Auth, all of it at once, so it didn't fit anonymous guests. **Total feature time: ~3 h 15 min.**
+
+---
+
+# Advanced feature 5: bulk reminders
+
+A day before each session, the guest gets a reminder email (session time, host, cancel link). Decisions: emails go to the **local Mailpit** inbox only (http://127.0.0.1:54324, no real provider); **guests only**; **24 hours before** the session. Supabase only sends its own Auth emails, so app emails need server code (core friction: "no notification emails"). Separate test host `reminder-host@test.dev` with 200 bookings in ~24 h (`npm run probe:reminders:seed`).
+
+Planned stages: 1. show the problem (naive scheduled loop), 2. Supabase Queues (`pgmq`), 3. opt-out + provider rate limits, 4. compare.
+
+## Stage 1: the naive scheduled loop loses and duplicates emails
+- **Step:** Advanced 5, stage 1
+- **What happened:** The design most tutorials show: a pg_cron job (`send-reminders`, hourly, **created switched off**) calls `public.run_reminders()`, which calls the Edge Function `send-reminders` via pg_net; the function finds bookings starting in 23–25 h without `reminder_sent_at`, sends one email each in a loop (Mailpit HTTP API), and marks them all at the end. `npm run probe:reminders:naive` (all problems reproduced):
+  - **A. Quiet day:** 200 reminders in < 1 s, all marked. It works, which is why the design is popular.
+  - **B. Crash halfway + the next run:** crash after 120 emails → 120 delivered, **0 marked**; the retry sends to everyone unmarked → **120 guests reminded twice**. Nothing recorded which 120 were already sent.
+  - **C. Slow provider (200 ms per email, 40 s total):** the scheduler's request (pg_net, 30 s timeout) gives up after ~140 emails. Two outcomes seen locally: usually the function **keeps going and finishes unseen** (the database only recorded "Timeout"); once, under load, the Edge runtime **terminated it half-way** (HTTP 546; runtime log: "CPU time soft limit reached", "early termination has been triggered") after 34 emails, 0 marked, so the next run would resend those 34.
+  - **D. Two runs overlap:** both find the same 200 unmarked bookings → **all 200 guests reminded twice**.
+  - **E. One long call (3 s per email, `--with-time-limit`):** the caller got **HTTP 504 after 150 s** (49 sent, 0 marked), but that was only the **gateway** giving up: the function **kept running in the background**, sending a reminder every 3 s to guests for minutes afterwards ("wall clock duration warning" in the runtime log), including into the next test run. The only local way to stop it was **restarting `functions:serve`**.
+- **What this shows:** a loop in one function call has **no memory of its own progress**. Every way it can end early (crash, caller timeout, runtime termination, gateway timeout) leaves "sent but not recorded", and every retry or overlap turns that into duplicates. Marking each email right after sending would shrink the window but not close it (crash between send and mark), and wouldn't stop overlapping runs.
+- **Edge Function limits are real and three-fold:** the caller's timeout (pg_net 30 s here), the gateway's (150 s locally), and the runtime's own CPU/wall-clock limits. They don't stop the function together: the caller can give up while the function continues, or the function can be killed while the caller waits. Hosted limits are documented by Supabase (run time and CPU time per invocation); measured here only locally.
+- **Mailpit as the test inbox:** reachable from the Edge Functions inside Docker (`http://inbucket:8025`), with an HTTP API to send and to count emails per recipient; test emails use one domain (`reminder-test.example`) so only they are deleted afterwards. No account, no real mail.
+- **Seeding hit feature 3:** inserting 200 bookings for one host as the database owner tripped the spam-protection limit (max 10 per host per 10 min applies to every insert). The seed lifts the limits inside its own transaction and restores them before commit.
+- **Code:** migration 63 lines (`reminder_sent_at`, `invoke_edge_function`, `run_reminders`, cron job off), naive function 75, seed 63, setup 22, demonstration ~150, 3 npm scripts.
+- **Testing / debugging:** Reproducing was easy with test switches (`crashAfter`, `delayMs`) and Mailpit's API. Debugging the runaway run was not: the only evidence was emails arriving with nobody calling, and the runtime log in `docker logs supabase_edge_runtime_…`.
+- **Surprising:** that an HTTP 504 didn't stop anything, and that a "finished" scheduled job (pg_cron only queues the request) says nothing about whether any email went out.
+- **Time spent:** ~70 min (incl. the time-limit run and the runaway function)
+- **Backend needed?** Not decided yet: stage 2 tests Supabase's own queue (`pgmq`) as the fix.

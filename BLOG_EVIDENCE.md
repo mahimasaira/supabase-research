@@ -175,6 +175,21 @@ Spam test host: `spam-host@test.dev` / `password123`, booking page `/book/222222
 
 ---
 
+## Feature 5: Bulk reminders
+
+Test host: `reminder-host@test.dev` / `password123`, 200 bookings in ~24 h. Reset: `npm run probe:reminders:seed`. Inbox: Mailpit http://127.0.0.1:54324.
+
+### Stage 1: the naive version (shows the problem) · commit: (not committed yet)
+- [ ] Proof: `evidence/*_probe-reminders-naive.txt` (A works; B 120 twice; C timeout after ~137, function finished unseen; D 200 twice) and the `…E-time-limit…` file
+- [ ] Mailpit: one guest with **two identical reminders** (search `guest-001@reminder-test.example` during scenario B or D)
+- [ ] Mailpit: one reminder opened (host, time, cancel link)
+- [ ] Studio: `net._http_response` row with `Timeout of 30000 ms reached` next to 200 sent reminders
+- [ ] The runaway: Mailpit receiving reminders every 3 s **after** the caller got HTTP 504 (run `-- --with-time-limit`, watch Mailpit; stop it by restarting `functions:serve`), plus `docker logs supabase_edge_runtime_supabase-booking` lines "wall clock duration warning" / "early termination has been triggered"
+- [ ] Code: the naive loop + "mark all at the end" in `supabase/functions/send-reminders/index.ts`
+- **Takeaway:** a scheduled loop in one function has no memory of what it did: crashes, timeouts and overlaps turn into lost or duplicate emails.
+
+---
+
 ## Final pass (after all features)
 
 - [ ] Commit everything, then `npm run evidence -- all` (sends a few real DocuSign emails) for clean, commit-labelled outputs

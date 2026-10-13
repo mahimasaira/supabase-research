@@ -24,6 +24,7 @@ const ALL = [
   'probe:spam:proof:limits',
   'probe:spam:proof:captcha',
   'probe:spam:compare',
+  'probe:reminders:naive',
 ]
 const args = process.argv.slice(2)
 const noEmail = args.includes('--no-email')

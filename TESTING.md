@@ -142,6 +142,7 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `npm run probe:spam:proof:limits` | `All checks passed` (15) |
 | `npm run probe:spam:proof:captcha` | `All checks passed` (15); needs `functions:serve` |
 | `npm run probe:spam:compare` | comparison table + `All checks passed` (8); ~2 min |
+| `npm run probe:reminders:naive` | `All problems reproduced` (feature 5, stage 1: shows the problem); ~1.5 min |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -247,6 +248,21 @@ With the test keys every check passes; real bot detection needs real keys from t
 | Do | Expect |
 |---|---|
 | `npm run probe:spam:compare` (~2 min, needs `functions:serve`) | a table (none / limits / limits + CAPTCHA) and `All checks passed` (8): takeover 50 → 10 → 0, real guest ❌ ❌ ✅, DocuSign emails 50 → 10 → 0 |
+
+## Feature 5: bulk reminders
+
+Separate test host `reminder-host@test.dev` / `password123` with 200 confirmed bookings starting in ~24 h: `npm run probe:reminders:seed` (also resets). One-time: `npm run probe:reminders:setup`. Emails go to **Mailpit** only: http://127.0.0.1:54324. The hourly job `send-reminders` exists but is **switched off** in stage 1.
+
+### Stage 1: the naive version (shows the problem)
+
+| Do | Expect |
+|---|---|
+| `npm run probe:reminders:naive` (~1.5 min, needs `functions:serve`) | `All problems reproduced`: A works on a quiet day; B 120 guests reminded twice after a crash + retry; C the scheduler's request times out while the function keeps sending; D overlapping runs remind everyone twice |
+| `npm run probe:reminders:naive -- --with-time-limit` | also E: how long one call may run locally (takes several minutes) |
+| Open Mailpit **while** the script runs | reminder emails arriving; in B/D the same guest twice |
+| Seed, then in Studio: `select public.run_reminders('{"hostId": "33333333-3333-4333-8333-333333333333"}')` | 200 reminders in Mailpit; open one: host, time (UTC), cancel link |
+
+The script deletes only its own test emails (`…@reminder-test.example`) from Mailpit afterwards.
 
 ## Troubleshooting
 
