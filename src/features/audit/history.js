@@ -8,6 +8,7 @@ export function describeActor(entry, myId) {
   switch (entry.actor_role) {
     case 'anon': return 'Guest'
     case 'docusign': return 'DocuSign' // the integration's Edge Functions (feature 4)
+    case 'scheduler': return 'Scheduler' // pg_cron jobs: retries, expiry (feature 4, stage 4)
     case 'authenticated': return 'A logged-in user'
     case 'supabase_auth_admin': return 'System (account)'
     case 'postgres':
@@ -35,6 +36,8 @@ function describeEntry(e) {
     case 'booking.deleted': return `removed ${guest(e)}'s booking on ${bookingSlot(e)}`
     case 'booking.updated':
       if (c.signature_status) return describeSignature(e, c)
+      // Bookkeeping of the retry job (attempt counter, timestamps): not shown.
+      if (Object.keys(c).every((k) => ['signature_attempts', 'signature_updated_at', 'signature_error'].includes(k))) return null
       return `changed ${guest(e)}'s booking on ${bookingSlot(e)} (${Object.keys(c).join(', ')})`
     case 'slot.created': return `added the slot ${slotTime(e)}`
     case 'slot.moved': return `moved a slot from ${when(c.starts_at?.from, c.ends_at?.from)} to ${when(c.starts_at?.to, c.ends_at?.to)}`
@@ -58,6 +61,7 @@ function describeSignature(e, c) {
     case 'sent': return `sent the agreement to ${guest(e)} for ${bookingSlot(e)}`
     case 'completed': return `${guest(e)} signed the agreement: booking on ${bookingSlot(e)} confirmed`
     case 'declined': return `${guest(e)} declined the agreement: booking on ${bookingSlot(e)} cancelled`
+    case 'expired': return `the agreement wasn't signed in time: ${guest(e)}'s booking on ${bookingSlot(e)} cancelled`
     case 'voided': return `the agreement was voided: ${guest(e)}'s booking on ${bookingSlot(e)} cancelled`
     case 'failed': return `could not send the agreement for ${guest(e)}'s booking on ${bookingSlot(e)}${c.signature_error?.to ? `: ${c.signature_error.to}` : ''}`
     default: return `agreement for ${guest(e)}'s booking on ${bookingSlot(e)}: ${c.signature_status.to}`

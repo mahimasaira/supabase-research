@@ -48,3 +48,6 @@ supabase/.branches/
 # Private keys (e.g. the DocuSign JWT-grant RSA key): never commit
 *.pem
 *.key
+
+# Saved proof outputs for the blog (npm run evidence); kept locally, not committed
+evidence/

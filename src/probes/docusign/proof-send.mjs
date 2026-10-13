@@ -75,8 +75,11 @@ try {
   check('recurring booking (2 weeks): 1 send request for the whole series', n === 1, `requests: ${n}`)
 
 } finally {
-  psql(`select vault.update_secret(id, '${realUrl.replace(/'/g, "''")}') from vault.secrets where name = 'docusign_send_url'`)
+  // Real sending stays off until the fake-address bookings are gone (section B resets first):
+  // since stage 4 the retry job (every minute) would otherwise send them for real.
+  process.on('exit', () => psql(`select vault.update_secret(id, '${realUrl.replace(/'/g, "''")}') from vault.secrets where name = 'docusign_send_url'`))
 }
+const restoreSending = () => psql(`select vault.update_secret(id, '${realUrl.replace(/'/g, "''")}') from vault.secrets where name = 'docusign_send_url'`)
 
 console.log('\n# A. Who may call the send function, and no double sends')
 const annaId = psql(`select id from bookings where guest_name = 'Anna'`)
@@ -98,6 +101,7 @@ if (!TEST_EMAIL) {
 } else {
   console.log(`\n# B. Real agreements, sent by DocuSign to the test address`)
   reset()
+  restoreSending()
   const waitForSend = async (name) => {
     for (let i = 0; i < 60; i++) {
       const s = psql(`select string_agg(distinct coalesce(signature_status, '-'), ',') from bookings where guest_name = '${name}'`)

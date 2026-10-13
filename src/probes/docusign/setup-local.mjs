@@ -4,8 +4,8 @@
 // 1. supabase/functions/.env (git-ignored, mode 600): the DOCUSIGN_* values from .env.local,
 //    plus DOCUSIGN_PRIVATE_KEY_BASE64 (the key file's content), because Edge Functions read
 //    their own env file and a deployed function has no key file.
-// 2. Vault (local database): docusign_send_url + docusign_send_key, used by the trigger that
-//    asks the docusign-send function to send an agreement (pg_net).
+// 2. Vault (local database): docusign_send_url, docusign_void_url + docusign_send_key, used by the
+//    database (pg_net) to call the docusign-send / docusign-void functions.
 // Never prints a secret. Restart `npm run functions:serve` afterwards (it reads .env on start).
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
@@ -54,14 +54,18 @@ const status = JSON.parse(execSync('npx supabase status -o json < /dev/null', { 
 const secretKey = status.SECRET_KEY
 if (!secretKey) fail('could not read SECRET_KEY from `supabase status`')
 // Inside Docker, the database reaches the Edge Functions through the API gateway "kong".
-const secrets = { docusign_send_url: 'http://kong:8000/functions/v1/docusign-send', docusign_send_key: secretKey }
+const secrets = {
+  docusign_send_url: 'http://kong:8000/functions/v1/docusign-send',
+  docusign_void_url: 'http://kong:8000/functions/v1/docusign-void', // stage 4
+  docusign_send_key: secretKey,
+}
 const literal = (s) => `'${s.replace(/'/g, "''")}'`
 const upserts = Object.entries(secrets).map(([name, secret]) => `
   select vault.update_secret(id, ${literal(secret)}) from vault.secrets where name = ${literal(name)};
   select vault.create_secret(${literal(secret)}, ${literal(name)}) where not exists (select 1 from vault.secrets where name = ${literal(name)});`).join('')
 // Sent on stdin, so the secret never appears in a process list.
 execSync(`psql ${DB} -q -v ON_ERROR_STOP=1 -At`, { input: `begin;${upserts}\ncommit;`, stdio: ['pipe', 'ignore', 'inherit'] })
-const stored = execSync(`psql ${DB} -At -c "select count(*) from vault.decrypted_secrets where name in ('docusign_send_url', 'docusign_send_key')"`).toString().trim()
-if (stored !== '2') fail('Vault secrets not stored')
-console.log('PASS  Vault: docusign_send_url + docusign_send_key stored')
+const stored = execSync(`psql ${DB} -At -c "select count(*) from vault.decrypted_secrets where name in ('docusign_send_url', 'docusign_void_url', 'docusign_send_key')"`).toString().trim()
+if (stored !== '3') fail('Vault secrets not stored')
+console.log('PASS  Vault: docusign_send_url, docusign_void_url, docusign_send_key stored')
 console.log('\nNow restart `npm run functions:serve` so the functions read the new env file.')

@@ -25,7 +25,7 @@ async function load() {
   error.value = ''
   const { data, error: err } = await supabase
     .from('slots')
-    .select('id, starts_at, ends_at, is_booked, bookings(id, guest_name, guest_email, status, created_at, cancelled_at)')
+    .select('id, starts_at, ends_at, is_booked, bookings(id, guest_name, guest_email, status, signature_status, created_at, cancelled_at)')
     .eq('host_id', user.value.id)
     .order('starts_at')
   if (err) error.value = friendlyError(err)
@@ -147,6 +147,7 @@ async function cancelBooking(booking) {
             <div>{{ formatSlot(slot) }}</div>
             <div v-if="activeBooking(slot)?.status === 'pending_signature'" class="text-sm text-amber-700">
               Awaiting signature from {{ activeBooking(slot).guest_name }} ({{ activeBooking(slot).guest_email }})
+              <span v-if="activeBooking(slot).signature_status === 'failed'">· sending the agreement failed, retrying</span>
             </div>
             <div v-else-if="activeBooking(slot)" class="text-sm text-green-700">
               Booked by {{ activeBooking(slot).guest_name }} ({{ activeBooking(slot).guest_email }})

@@ -137,6 +137,7 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `npm run probe:docusign:proof:pending` | `All checks passed` (15); switches sending off while it runs |
 | `npm run probe:docusign:proof:send` | `All checks passed` (13); section B sends real emails to `DOCUSIGN_TEST_SIGNER_EMAIL` |
 | `npm run probe:docusign:proof:receive` | `All checks passed` (19); section B sends + voids one real envelope |
+| `npm run probe:docusign:proof:failures` | `All checks passed` (17); ~2 min; section 5 sends + voids one real envelope |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -183,6 +184,18 @@ npm run probe:docusign:setup     # writes supabase/functions/.env + Vault secret
 | Check signature status with nothing out | "No agreements are waiting." |
 
 The webhook (`docusign-webhook`) can't receive real DocuSign messages locally (needs a public URL); the proof script sends it simulated, correctly signed ones.
+
+### Stage 4: when things go wrong
+
+| Do | Expect |
+|---|---|
+| `npm run probe:docusign:proof:failures` (~2 min, waits for a pg_cron run) | `All checks passed` (17). Section 5 sends + voids **1 real envelope** |
+| **Lost send:** stop `functions:serve`, book with your email (opt-in host), start it again | within ~2–3 min the agreement arrives anyway (retry job); Dashboard meanwhile may show "sending the agreement failed, retrying" |
+| **Cancel withdraws:** book with your email, wait for the email, cancel (guest or host) | a "voided" email from DocuSign; the agreement can't be signed anymore; History "DocuSign · the agreement was voided …" |
+| **Expiry:** Studio `update bookings set created_at = now() - interval '3 days' where …` on a waiting booking, then `select public.docusign_expire_unsigned()` | booking cancelled, slot free, agreement voided; History "Scheduler · the agreement wasn't signed in time …" |
+| Studio: `select jobname, schedule from cron.job` / `select * from cron.job_run_details order by start_time desc limit 5` | the two `docusign-*` jobs, recent runs `succeeded` |
+
+Since stage 4 the retry job sends any waiting booking every minute: **only book with real addresses you own** while a host requires signatures.
 
 ## Troubleshooting
 

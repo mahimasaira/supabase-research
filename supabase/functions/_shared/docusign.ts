@@ -106,3 +106,18 @@ export async function getEnvelopeStatus(envelopeId: string): Promise<string> {
 }
 
 export const accountId = () => config().accountId
+
+// Stage 4: withdraw an agreement. DocuSign then tells the guest it was voided, and it can no
+// longer be signed. Throws if DocuSign refuses (e.g. already signed or already voided).
+export async function voidEnvelope(envelopeId: string, reason: string): Promise<void> {
+  const c = config()
+  const res = await fetch(`${c.baseUri}/restapi/v2.1/accounts/${c.accountId}/envelopes/${encodeURIComponent(envelopeId)}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${await getAccessToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'voided', voidedReason: reason.slice(0, 200) }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(`DocuSign void: HTTP ${res.status} ${body.errorCode ?? ''} ${body.message ?? ''}`.trim())
+  }
+}

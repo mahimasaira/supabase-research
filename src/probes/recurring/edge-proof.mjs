@@ -74,9 +74,10 @@ check('committed: 1 series, 2 bookings', count('booking_series') === 1 && count(
 // ---------------------------------------------------------------------------
 console.log('\n# 4. RLS is enforced inside the direct connection')
 // A rule that ONLY RLS enforces (no constraint): guests can't see or book past slots.
-// Three weekly slots at an odd time: P (1 day ago, past), P+7d and P+14d (future).
+// Three weekly slots: P (yesterday 03:00 UTC, past), P+7d and P+14d (future). 03:00 so they
+// never overlap the seeded Monday 10:00 slots (the exclusion constraint would refuse them).
 seed()
-const P = psql(`select to_char(date_trunc('minute', now() - interval '1 day') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`)
+const P = psql(`select to_char((date_trunc('day', now() - interval '1 day') + interval '3 hours') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`)
 psql(`insert into slots (host_id, starts_at, ends_at) select '${HOST}', t, t + interval '5 minutes'
       from (select '${P}'::timestamptz + n * interval '168 hours' as t from generate_series(0, 2) n) s`)
 const asOwner = psql(`select count(*) from slots where host_id = '${HOST}' and starts_at = '${P}' and not is_booked`)

@@ -13,7 +13,7 @@
 // "DocuSign" as the actor.
 import '@supabase/functions-js/edge-runtime.d.ts'
 import postgres from 'postgres'
-import { createEnvelope } from '../_shared/docusign.ts'
+import { createEnvelope, voidEnvelope } from '../_shared/docusign.ts'
 
 const sql = postgres(Deno.env.get('SUPABASE_DB_URL')!, { max: 1, prepare: false })
 
@@ -91,12 +91,18 @@ Deno.serve(async (req) => {
       signer: guest,
     })
 
-    // 4. Record it.
-    await asDocuSign((tx) => tx`
+    // 4. Record it, on the bookings that are still waiting. If they were all cancelled while
+    //    DocuSign was creating the envelope (stage 4: a race), withdraw it right away.
+    const recorded = await asDocuSign((tx) => tx`
       update public.bookings
          set envelope_id = ${envelopeId}, signature_status = 'sent', signature_updated_at = now()
-       where id in ${tx(ids)}`)
-    return reply(200, { sent: true, envelope_id: envelopeId, bookings: ids.length })
+       where id in ${tx(ids)} and status = 'pending_signature'
+      returning id`)
+    if (recorded.length === 0) {
+      await voidEnvelope(envelopeId, 'The booking was cancelled.')
+      return reply(200, { sent: false, voided: envelopeId, reason: 'booking cancelled while sending' })
+    }
+    return reply(200, { sent: true, envelope_id: envelopeId, bookings: recorded.length })
   } catch (err) {
     // The bookings stay pending_signature; signature_status 'failed' lets a retry claim them.
     const message = err instanceof Error ? err.message : String(err)

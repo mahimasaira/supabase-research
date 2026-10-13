@@ -30,13 +30,17 @@ const slotAt = (week) => psql(`select id || '|' || to_char(starts_at at time zon
   from slots where host_id = '${HOST}' order by starts_at offset ${week - 1} limit 1`).split('|')
 const state = (name) => psql(`select string_agg(distinct b.status || '/' || coalesce(b.signature_status, '-'), ',') from bookings b where b.guest_name = '${name}'`)
 const slotBooked = (name) => psql(`select bool_or(s.is_booked) from bookings b join slots s on s.id = b.slot_id where b.guest_name = '${name}'`) === 't'
-const realSendUrl = psql(`select coalesce(max(decrypted_secret), '') from vault.decrypted_secrets where name = 'docusign_send_url'`)
-const setSendUrl = (url) => psql(`select vault.update_secret(id, '${url.replace(/'/g, "''")}') from vault.secrets where name = 'docusign_send_url'`)
+// Function URLs in Vault (send, and since stage 4 void): unreachable while fake data exists.
+const vaultUrls = ['docusign_send_url', 'docusign_void_url']
+const savedUrls = Object.fromEntries(vaultUrls.map((n) => [n, psql(`select coalesce(max(decrypted_secret), '') from vault.decrypted_secrets where name = '${n}'`)]))
+const setUrl = (name, url) => psql(`select vault.update_secret(id, '${url.replace(/'/g, "''")}') from vault.secrets where name = '${name}'`)
+const offline = () => vaultUrls.forEach((n) => savedUrls[n] && setUrl(n, 'http://127.0.0.1:9/unreachable'))
+const online = () => vaultUrls.forEach((n) => savedUrls[n] && setUrl(n, savedUrls[n]))
 const reset = () => {
   execSync('npm run -s probe:audit:seed', { stdio: 'ignore' })
   psql(`update profiles set require_signature = true where id = '${HOST}'`)
 }
-process.on('exit', () => { if (realSendUrl) setSendUrl(realSendUrl) })
+process.on('exit', online)
 
 let failures = 0
 function check(name, ok, detail) {
@@ -66,7 +70,7 @@ const markSent = (name, envelopeId) => psql(`update bookings set signature_statu
 // ===========================================================================
 console.log('\n# A. Webhook: only genuine DocuSign messages count')
 reset()
-if (realSendUrl) setSendUrl('http://127.0.0.1:9/unreachable')
+offline()
 await book(1, 'Anna'); markSent('Anna', 'env-anna')
 await book(2, 'Ben'); markSent('Ben', 'env-ben')
 const carlaToken = crypto.randomUUID()
@@ -133,7 +137,6 @@ psql(`update bookings set status = 'pending_signature', signature_status = 'sent
 s = await sync(other)
 check('another host → checks 0 agreements (only their own)', s.status === 200 && s.data?.checked === 0, JSON.stringify(s))
 psql(`delete from auth.users where email like 'sync-other-%@test.dev'`)
-if (realSendUrl) setSendUrl(realSendUrl)
 
 // ===========================================================================
 if (!TEST_EMAIL) {
@@ -141,6 +144,7 @@ if (!TEST_EMAIL) {
 } else {
   console.log('\n# B. A real envelope: sent → still waiting → voided in DocuSign → booking cancelled')
   reset()
+  online() // fake data gone: real sending again
   await book(1, 'Real Signer', TEST_EMAIL)
   for (let i = 0; i < 60 && !/sent|failed/.test(state('Real Signer')); i++) await sleep(1000)
   const envelopeId = psql(`select coalesce(envelope_id, '') from bookings where guest_name = 'Real Signer'`)

@@ -391,3 +391,40 @@ Planned stages: 1. bookings that wait for a signature (no DocuSign yet), 2. send
 - **Surprising:** how little code the "receive" side needs once the state rules live in one database function, and how much of it is about distrust (signature, account, idempotency, ordering).
 - **Time spent:** ~60 min
 - **Backend needed?** **Yes:** a public endpoint that verifies signatures and a function holding DocuSign credentials. Edge Functions are enough; the rules stay in Postgres.
+
+## Stage 4: when things go wrong (drawbacks shown first, then fixed)
+- **Step:** Advanced 4, stage 4
+- **Drawbacks, reproduced before any fix.** `npm run probe:docusign:proof:failures` was written first and run against stages 1–3: **11 of 17 checks failed**:
+
+| Drawback (stages 1–3) | Evidence from the first run |
+|---|---|
+| A send request pg_net couldn't deliver is **lost** | function down → `Couldn't connect`, booking `pending` forever, no agreement ever sent |
+| A send that crashed half-way stays **`sending` forever** | nothing picks it up |
+| A booking that's **never signed blocks the slot forever** | still waiting after "3 days"; also when the session is about to start |
+| **Cancelling doesn't withdraw the agreement** | real envelope: guest cancelled, DocuSign still `sent` (guest could still sign) |
+| **Nothing runs on a schedule** | no jobs at all (`cron.job` doesn't exist) |
+
+- **Fixes, built only from Postgres + Supabase pieces** (migration `20261013095757_docusign_reliability.sql`, Edge Function `docusign-void`). Same proof afterwards: **17/17**, incl. the real envelope now `voided` after the guest cancels:
+  - **pg_cron** (scheduled jobs inside Postgres): `docusign-retry-sends` every minute re-queues lost or failed sends with backoff (1, 2, 4, 8 min), gives up after 5 attempts, and rescues sends stuck in `sending` for 5 min. `docusign-expire-unsigned` every 5 minutes cancels bookings unsigned after 48 h or whose session starts within the hour (`expired`, slot freed). Proven: the retry job really runs (`cron.job_run_details`: `succeeded`).
+  - **Withdraw on cancel:** a trigger queues `docusign-void` (pg_net) when a waiting booking with an agreement is cancelled by the guest, host or expiry, but only when *no* booking of a recurring series still uses it, and not when DocuSign already ended it (declined). The function re-checks before voiding.
+  - **Race:** if a booking is cancelled while `docusign-send` is still creating its envelope, the new envelope is voided right away.
+- **This is the "job queue you build yourself".** A traditional backend would use a queue library (e.g. BullMQ, or NestJS's scheduler) with retries, backoff, dead-letter handling and a dashboard. Here the same took: pg_cron schedules, a retry function with an attempt counter and backoff maths in SQL, a "stuck" detector, pg_net for delivery, Vault for three URLs and a key, and a fourth Edge Function. It works, but none of it was provided, and **observability is SQL queries** (`cron.job_run_details`, `net._http_response`, `bookings.signature_error`).
+- **New risk created by the fix:** the retry job sends *any* waiting booking every minute. Proof scripts and manual tests that book with made-up emails now must keep sending switched off until their data is gone (two proof scripts had a gap: they restored the real URL *before* resetting). A guest who books with a typo'd email gets 5 retries to that address.
+- **Time-dependent tests:** retry and expiry rules take an age/interval parameter, so the proof can test "3 days later" and "backoff passed" by moving timestamps, without waiting. One unrelated older proof (`recurring/edge-proof`) broke today because its "yesterday at this time" slot collided with the seeded Monday 10:00 slots at 10:0x UTC; pinned to 03:00 UTC.
+- **Code:** migration 184 lines (pg_cron, attempt counter, call helper, retry, expiry, void trigger, schedules), `docusign-void` 57, shared helper +15, send race +16, History +4, Dashboard +3, setup +16, proof 182, proof fixes ~25. 15 files, ~500 lines.
+- **Testing / debugging:** Writing the proof first made the drawbacks concrete and the fixes measurable. Hardest part: background behaviour (pg_net worker, cron every minute) that affects *other* tests running at the same time.
+- **Surprising:** that cancelling a booking had real-world side effects we'd forgotten (a live, signable agreement), and that the reliability layer ended up larger than the feature itself.
+- **Time spent:** ~75 min
+- **Backend needed?** Edge Functions, yes (since stage 2). A *dedicated* backend isn't strictly needed, but this stage is where it starts to pay off: retries, scheduling, dead letters and monitoring are standard features of a backend job queue and had to be hand-built here.
+
+### DocuSign: the four stages compared
+
+| | 1. Waiting bookings | 2. Send | 3. Receive | 4. When things go wrong |
+|---|---|---|---|---|
+| Built with | trigger + RLS | trigger → pg_net → Edge Function | webhook + status-check Edge Functions | pg_cron + trigger + Edge Function |
+| Supabase alone (browser + DB)? | ✅ | ❌ private key, outbound API | ❌ public signed endpoint | ❌ needs the functions above |
+| Hardest part | core rules hard-coded `confirmed` | configuration (Vault, function env, cold starts) | distrust: HMAC, retries, ordering | background jobs interfering with tests |
+| Proof | 15 checks | 13 (real sends) | 19 (real envelope voided) | 17 (11 failed before the fix) |
+| Time | ~45 min | ~75 min | ~60 min | ~75 min |
+
+**For the blog:** the integration works on Supabase, but only with server code (4 Edge Functions) and a reliability layer assembled from pg_net, pg_cron, Vault and triggers. The things a traditional backend gives you out of the box (a job queue with retries, a scheduler, a place for secrets, logs) are exactly what had to be built here. Local development can't receive webhooks at all. **Total feature time: ~4 h 45 min (incl. ~45 min setup check).**
