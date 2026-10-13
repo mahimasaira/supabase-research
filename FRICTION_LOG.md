@@ -428,3 +428,28 @@ Planned stages: 1. bookings that wait for a signature (no DocuSign yet), 2. send
 | Time | ~45 min | ~75 min | ~60 min | ~75 min |
 
 **For the blog:** the integration works on Supabase, but only with server code (4 Edge Functions) and a reliability layer assembled from pg_net, pg_cron, Vault and triggers. The things a traditional backend gives you out of the box (a job queue with retries, a scheduler, a place for secrets, logs) are exactly what had to be built here. Local development can't receive webhooks at all. **Total feature time: ~4 h 45 min (incl. ~45 min setup check).**
+
+---
+
+# Advanced feature 3: spam protection (rate limiting anonymous bookings)
+
+Guests book without an account. RLS decides *who* may write, not *how often*, and Supabase's built-in rate limits and CAPTCHA only cover Auth (sign-in, sign-up), not database writes. Decisions: IP addresses only for rate limiting, hashed and deleted after a day; CAPTCHA via Cloudflare Turnstile (official test keys); limits: max 3 active bookings per email per host, max 10 bookings per host per 10 minutes. Separate test host `spam-host@test.dev` with 50 slots (`npm run probe:spam:seed`).
+
+Planned stages: 1. show the problem (flood script), 2. limits in the database (and try to get around them), 3. CAPTCHA (anonymous sign-in with CAPTCHA vs. Edge Function), 4. compare.
+
+## Stage 1: one script can take over a host's calendar
+- **Step:** Advanced 3, stage 1
+- **What happened:** `npm run probe:spam:flood` acts like an attacker with only what every visitor's browser has (project URL + publishable key), through the same public API as the booking page. All four problems reproduced:
+  - **A. Whole calendar:** all **50 slots booked in ~240 ms** by one script (parallel, fake names and emails); the host's booking page then offers 0 slots.
+  - **B. No per-guest limit:** 50 bookings accepted for the **same** email address.
+  - **C. No rate limit on writes:** **500 write requests in ~0.5–0.7 s (~700–1,000/s)**, never a `429 Too Many Requests` (50 × `201`, 450 × `401` "slot taken").
+  - **D. The DocuSign multiplier:** on a host that requires signatures, 50 fake bookings queued **50 DocuSign send requests**, i.e. 50 agreement emails from our DocuSign account to addresses the attacker chooses. (Sending was switched off for the test; nothing reached DocuSign.)
+- **Why RLS can't help:** every single booking is legitimate on its own (free future slot, valid email). The abuse is in the *amount* and *speed*, which RLS policies don't see: they look at one row, with no memory of earlier requests and no notion of time.
+- **What "anonymous" means here:** all guests share the same role (`anon`) and the same publishable key, so the database can't tell one guest from a thousand. The only per-request clues are what the client sends (email: chosen by the attacker) and request headers (IP: tested in stage 2).
+- **Local only:** the local stack (Kong + PostgREST) has no rate limiting on API writes. Hosted Supabase may have platform-level protection; not tested here, and not something the app can configure per table.
+- **Test infrastructure fix:** counting pg_net requests by "rows in `net._http_response` after minus before" came out **negative** once: pg_net periodically deletes old responses. Now all scripts count responses to request ids newer than the start (rolled-back requests never get a response, so the DocuSign rollback check stays correct). Fixed in `flood.mjs`, `proof-send.mjs`, `proof-failures.mjs`.
+- **Code:** seed 46 lines, flood script ~125 lines, 2 npm scripts; counting fix in 2 DocuSign proofs. No app code changed.
+- **Testing / debugging:** Easy and fast; the numbers are the finding. The only care needed: round D must never let fake addresses reach DocuSign (sending off, data reset *before* switching it back on, also on crash).
+- **Surprising:** that the DocuSign integration turned a nuisance (blocked calendar) into a real cost and reputation risk (our account emailing strangers).
+- **Time spent:** ~35 min
+- **Backend needed?** Not decided yet: stage 2 tests what the database alone can enforce.

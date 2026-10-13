@@ -138,6 +138,7 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `npm run probe:docusign:proof:send` | `All checks passed` (13); section B sends real emails to `DOCUSIGN_TEST_SIGNER_EMAIL` |
 | `npm run probe:docusign:proof:receive` | `All checks passed` (19); section B sends + voids one real envelope |
 | `npm run probe:docusign:proof:failures` | `All checks passed` (17); ~2 min; section 5 sends + voids one real envelope |
+| `npm run probe:spam:flood` | `All problems reproduced` (feature 3, stage 1: shows the problem) |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -196,6 +197,20 @@ The webhook (`docusign-webhook`) can't receive real DocuSign messages locally (n
 | Studio: `select jobname, schedule from cron.job` / `select * from cron.job_run_details order by start_time desc limit 5` | the two `docusign-*` jobs, recent runs `succeeded` |
 
 Since stage 4 the retry job sends any waiting booking every minute: **only book with real addresses you own** while a host requires signatures.
+
+## Feature 3: spam protection
+
+Separate test host `spam-host@test.dev` / `password123` with 50 slots: `npm run probe:spam:seed` (also resets).
+
+### Stage 1: show the problem
+
+| Do | Expect |
+|---|---|
+| `npm run probe:spam:flood` | `All problems reproduced`: 50 slots in ~250 ms, 50 bookings for one email, ~500 writes/s without a 429, 50 DocuSign send requests (sending switched off) |
+| Open the spam host's booking page (`/book/22222222-2222-4222-8222-222222222222`), run the flood | all slots disappear within a second (Realtime) |
+| Log in as `spam-host@test.dev` → Dashboard | 50 bookings by "Bot …" |
+
+The script resets the spam host afterwards and switches DocuSign sending back on only after the fake bookings are gone.
 
 ## Troubleshooting
 

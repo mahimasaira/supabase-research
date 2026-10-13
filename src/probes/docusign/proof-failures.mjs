@@ -44,12 +44,14 @@ async function drain() {
   for (let i = 0; i < 40 && psql('select count(*) from net.http_request_queue') !== '0'; i++) await sleep(250)
   await sleep(1500)
 }
+// Counts responses to requests newer than the start: pg_net deletes OLD responses now and then
+// (so a before/after row count can go wrong), and rolled-back requests never get a response.
 async function requestsDuring(fn) {
   await drain() // earlier requests (e.g. the booking's own send) must not be counted
-  const before = Number(psql('select count(*) from net._http_response'))
+  const lastId = psql('select last_value from net.http_request_queue_id_seq')
   const result = await fn()
   await drain()
-  return { n: Number(psql('select count(*) from net._http_response')) - before, result }
+  return { n: Number(psql(`select count(*) from net._http_response where id > ${lastId}`)), result }
 }
 const reset = () => {
   execSync('npm run -s probe:audit:seed', { stdio: 'ignore' })

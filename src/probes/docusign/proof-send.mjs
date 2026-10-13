@@ -38,12 +38,14 @@ function check(name, ok, detail) {
 }
 
 // pg_net sends queued requests in the background after commit; count what it has processed.
+// Counts responses to requests newer than the start: pg_net deletes OLD responses now and then
+// (so a before/after row count can go wrong), and rolled-back requests never get a response.
 async function requestsSentDuring(fn) {
-  const before = Number(psql('select count(*) from net._http_response'))
+  const lastId = psql('select last_value from net.http_request_queue_id_seq')
   await fn()
   for (let i = 0; i < 40 && psql('select count(*) from net.http_request_queue') !== '0'; i++) await sleep(250)
   await sleep(1500)
-  return Number(psql('select count(*) from net._http_response')) - before
+  return Number(psql(`select count(*) from net._http_response where id > ${lastId}`))
 }
 const anon = client()
 const book = (slotId, name, email = 'g@example.com') =>

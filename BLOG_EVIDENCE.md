@@ -136,6 +136,19 @@ Host: log in, tick **Require a signed agreement** on the Dashboard. Guest: book 
 
 ---
 
+## Feature 3: Spam protection
+
+Spam test host: `spam-host@test.dev` / `password123`, booking page `/book/22222222-2222-4222-8222-222222222222`. Reset: `npm run probe:spam:seed`.
+
+### Stage 1: one script takes over a calendar (shows the problem) · commit: (not committed yet)
+- [ ] Proof: `evidence/*_probe-spam-flood.txt` (A: 50 slots in ~250 ms, B: one email ×50, C: ~500 writes/s no 429, D: 50 DocuSign sends)
+- [ ] Screen recording or before/after screenshots: the spam host's booking page with 50 slots → empty within a second while the flood runs (Realtime)
+- [ ] Dashboard as the spam host: 50 bookings by "Bot …"
+- [ ] Code: the 4 lines that do it (`Promise.all(slots.map(… insert …))`) to show how little an attacker needs
+- **Takeaway:** RLS decides who may write, not how often; anonymous guests are indistinguishable.
+
+---
+
 ## Final pass (after all features)
 
 - [ ] Commit everything, then `npm run evidence -- all` (sends a few real DocuSign emails) for clean, commit-labelled outputs
