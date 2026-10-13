@@ -164,6 +164,15 @@ Spam test host: `spam-host@test.dev` / `password123`, booking page `/book/222222
 - [ ] Code: `bookings_check_captcha` (current_user + `app.captcha_verified`) and `applyCaller()` in `_shared/caller.ts`
 - **Takeaway:** the CAPTCHA itself is a few lines; closing every other way in is the real work.
 
+### Stage 4: all layers compared · commit: (not committed yet)
+- [ ] The comparison table from `evidence/*_probe-spam-compare.txt` (screenshot of the terminal, or the rendered table from FRICTION_LOG.md)
+- [ ] Highlight the "Real guest right after the takeover" row: ❌ ❌ ✅
+- **Takeaway:** limits reduce damage but lock out real guests; only the CAPTCHA tells humans from bots.
+
+(Stage 3b, Supabase's own CAPTCHA via anonymous sign-in, was skipped: reasoning in FRICTION_LOG.md, no evidence to capture.)
+
+- [ ] **Summary table** "Spam protection: the stages compared"
+
 ---
 
 ## Final pass (after all features)

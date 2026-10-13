@@ -487,3 +487,41 @@ Planned stages: 1. show the problem (flood script), 2. limits in the database (a
 - **Surprising:** that the IP forwarding needed for the CAPTCHA function fixed a weakness from stage 2 for free, and that "guests have no account" again shaped everything (no Supabase Auth CAPTCHA, no per-user limits).
 - **Time spent:** ~75 min
 - **Backend needed?** **Yes, a small one:** verifying a CAPTCHA needs a secret and a server-side call, so an Edge Function. Everything else (blocking the bypass, limits) stays in Postgres.
+
+## Stage 3b (skipped): Supabase's own CAPTCHA via anonymous sign-in
+- **Decision:** not built; recorded as reasoning, not measured. Supabase Auth can verify Turnstile/hCaptcha tokens, but only on Auth endpoints, and **for all of them at once** (`[auth.captcha]` in `config.toml`). Guests don't use Auth, so it can't guard a booking directly. The workaround would be **anonymous sign-ins with a CAPTCHA**; from the schema it's clear this would also mean: host login and sign-up (and every test script) need a CAPTCHA token too; anonymous users get the `authenticated` role, so every RLS policy that means "a host" would have to exclude `is_anonymous` users (otherwise an anonymous guest could, e.g., create slots); the `handle_new_user` sign-up trigger would create a host profile for every guest. Supabase does rate-limit anonymous sign-ins per IP (`anonymous_users = 30` per hour). Trying it needs `supabase stop/start` twice and breaks local login while on.
+
+## Stage 4: all layers compared
+- **Step:** Advanced 3, stage 4
+- **What happened:** `npm run probe:spam:compare` runs the same attacks against three levels on the spam host (limits set so high they never trigger = "none"; stage 2 limits; limits + CAPTCHA) and measures what a real guest experiences afterwards. 8/8 expected-pattern checks pass:
+
+| Attack (bot, straight to the API) | None | Limits | Limits + CAPTCHA |
+|---|---|---|---|
+| Calendar takeover (50 parallel bookings) | 50/50 | 10/50 | **0/50** |
+| Real guest right after the takeover | nothing left ❌ | blocked, 429 ❌ (host lock-out) | **can book ✅** |
+| One email, 10 bookings | 10 | 3 | 0 |
+| Email variations (name+xyz@), 10 | 10 | 10 (per-email limit fooled, host limit caps) | 0 |
+| Fake IP headers, 40 (host limit lifted) | 40 | 30 (IP limit holds) | 0 |
+| Bot signs up first, then 20 | 20 | 10 | 0 |
+| Recurring rpc (skipping the page) | booked | booked | refused (403) |
+| DocuSign emails from 50 bot bookings | 50 | 10 | 0 |
+| Normal booking, average time | ~25 ms | ~13 ms | **~70 ms** (Cloudflare check + Edge Function) |
+
+- **Reading the table:** limits alone **reduce** the damage (50 → 10) but then **turn on the real guests**: after a takeover attempt, the host is locked for 10 minutes. Only the CAPTCHA stops bots without hurting humans, at the cost of ~60 ms per booking, a visible widget, an Edge Function, and a dependency on Cloudflare. In the "none" column the takeover took ~780 ms instead of stage 1's ~240 ms: the advisory locks (stage 2) serialize bookings per host even when the limits are lifted.
+- **Code:** comparison script ~170 lines, 1 npm script. No app code changed.
+- **Time spent:** ~25 min (+ restarting `functions:serve`, which had stopped)
+- **Backend needed?** See the feature summary below.
+
+### Spam protection: the stages compared
+
+| | 1. Show the problem | 2. Limits in the database | 3. CAPTCHA via Edge Function | 4. Compare |
+|---|---|---|---|---|
+| Built with | flood script | trigger + advisory locks + pg_cron (cleanup) + Vault (salt) | Edge Function + trigger + Turnstile widget | comparison script |
+| Supabase alone (browser + DB)? | n/a | ✅ | ❌ CAPTCHA verification needs a secret + server call | n/a |
+| Stops the takeover | ❌ (50/50) | partly (10/50) | ✅ (0/50) | |
+| Hurts real guests | — | yes (host lock-out, shared IPs) | no (one extra click) | |
+| Hardest part | — | race condition (count-then-insert), which IP to trust | closing every other way in | |
+| Proof | 4 problems reproduced | 15 checks (14 of max 10 before the lock fix) | 15 checks | 8 checks |
+| Time | ~35 min | ~60 min | ~75 min | ~25 min |
+
+**For the blog:** RLS answers *who* may write, not *how often*, and anonymous guests are indistinguishable. Postgres can enforce limits for every path through the API (with care: atomicity, trusting the right IP header, privacy), but limits alone let an attacker lock out real guests. Telling humans from bots needs a CAPTCHA, which needs a secret and a server-side check (an Edge Function), and most of the work is closing every other way in. Supabase's built-in CAPTCHA only guards Auth, all of it at once, so it didn't fit anonymous guests. **Total feature time: ~3 h 15 min.**

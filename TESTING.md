@@ -141,6 +141,7 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `npm run probe:spam:flood` | `SKIP` since stage 2 (limits stop it); stage 1 output in `evidence/` |
 | `npm run probe:spam:proof:limits` | `All checks passed` (15) |
 | `npm run probe:spam:proof:captcha` | `All checks passed` (15); needs `functions:serve` |
+| `npm run probe:spam:compare` | comparison table + `All checks passed` (8); ~2 min |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -240,6 +241,12 @@ One-time: `npm run probe:spam:setup` (puts the test secret into `supabase/functi
 | Untick the setting | no widget; booking works as before |
 
 With the test keys every check passes; real bot detection needs real keys from the Cloudflare dashboard (`VITE_TURNSTILE_SITE_KEY` in `.env.local`, `TURNSTILE_SECRET_KEY` via `probe:spam:setup`).
+
+### Stage 4: all layers compared
+
+| Do | Expect |
+|---|---|
+| `npm run probe:spam:compare` (~2 min, needs `functions:serve`) | a table (none / limits / limits + CAPTCHA) and `All checks passed` (8): takeover 50 → 10 → 0, real guest ❌ ❌ ✅, DocuSign emails 50 → 10 → 0 |
 
 ## Troubleshooting
 
