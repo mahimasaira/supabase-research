@@ -8,6 +8,7 @@
 //    asks the docusign-send function to send an agreement (pg_net).
 // Never prints a secret. Restart `npm run functions:serve` afterwards (it reads .env on start).
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { execSync } from 'node:child_process'
 
 const DB = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
@@ -28,6 +29,16 @@ try {
 if (!/-----BEGIN (RSA )?PRIVATE KEY-----/.test(pem)) fail('DOCUSIGN_PRIVATE_KEY_PATH is not a PEM private key')
 
 const wanted = Object.fromEntries([...NAMES.map((n) => [n, value(n)]), ['DOCUSIGN_PRIVATE_KEY_BASE64', Buffer.from(pem).toString('base64')]])
+
+// Stage 3, webhook: the HMAC key DocuSign Connect signs its messages with. Real key from
+// DocuSign (admin → Connect → Connect Keys) if set in .env.local; otherwise a random local key,
+// generated once and kept, for the simulated messages of the proof script.
+const existing = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf8') : ''
+const keptHmac = existing.match(/^DOCUSIGN_CONNECT_HMAC_KEY=(.+)$/m)?.[1]
+wanted.DOCUSIGN_CONNECT_HMAC_KEY = value('DOCUSIGN_CONNECT_HMAC_KEY') || keptHmac || randomBytes(32).toString('base64')
+const hmacSource = value('DOCUSIGN_CONNECT_HMAC_KEY') ? 'from .env.local' : keptHmac ? 'local key kept' : 'new local key generated'
+// Optional: public URL of docusign-webhook (hosted project or tunnel); then envelopes ask DocuSign to call it.
+if (value('DOCUSIGN_WEBHOOK_URL')) wanted.DOCUSIGN_WEBHOOK_URL = value('DOCUSIGN_WEBHOOK_URL')
 // Keep any other lines already in the file; replace only the DOCUSIGN_* ones.
 const kept = existsSync(ENV_FILE)
   ? readFileSync(ENV_FILE, 'utf8').split('\n').filter((l) => l.trim() && !Object.keys(wanted).some((k) => l.startsWith(`${k}=`)))
@@ -36,7 +47,7 @@ writeFileSync(ENV_FILE, [...kept, ...Object.entries(wanted).map(([k, v]) => `${k
 chmodSync(ENV_FILE, 0o600)
 const ignored = (() => { try { execSync(`git check-ignore -q ${ENV_FILE}`); return true } catch { return false } })()
 if (!ignored) fail(`${ENV_FILE} is NOT git-ignored. Fix .gitignore before continuing.`)
-console.log(`PASS  ${ENV_FILE} written (${Object.keys(wanted).length} DOCUSIGN_* values, mode 600, git-ignored)`)
+console.log(`PASS  ${ENV_FILE} written (${Object.keys(wanted).length} DOCUSIGN_* values, mode 600, git-ignored; webhook HMAC key: ${hmacSource})`)
 
 // ---- 2. Vault secrets for the database trigger ----
 const status = JSON.parse(execSync('npx supabase status -o json < /dev/null', { stdio: ['ignore', 'pipe', 'ignore'] }).toString())

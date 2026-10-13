@@ -14,5 +14,5 @@ export const {
   recurringStrategies, bookRecurring,
   bookSlotLogged, cancelAsGuestLogged, cancelAsHostLogged, deleteSlotLogged, logAuditEventFromClient,
   listAuditHistory,
-  getSignatureRequirement, setSignatureRequirement,
+  getSignatureRequirement, setSignatureRequirement, checkSignatureStatus,
 } = backend

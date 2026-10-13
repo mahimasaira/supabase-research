@@ -23,6 +23,7 @@
     "probe:docusign:proof:pending": "node --env-file=.env.local src/probes/docusign/proof-pending.mjs",
     "probe:docusign:setup": "node --env-file=.env.local src/probes/docusign/setup-local.mjs",
     "probe:docusign:proof:send": "node --env-file=.env.local src/probes/docusign/proof-send.mjs",
+    "probe:docusign:proof:receive": "node --env-file=.env.local src/probes/docusign/proof-receive.mjs",
     "test:clean": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \"delete from auth.users where email like '%@test.dev'\""
   },
   "dependencies": {

@@ -136,6 +136,7 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `node --env-file=.env.local scripts/docusign-check.mjs` | 4 PASS lines + account name (DocuSign setup works) |
 | `npm run probe:docusign:proof:pending` | `All checks passed` (15); switches sending off while it runs |
 | `npm run probe:docusign:proof:send` | `All checks passed` (13); section B sends real emails to `DOCUSIGN_TEST_SIGNER_EMAIL` |
+| `npm run probe:docusign:proof:receive` | `All checks passed` (19); section B sends + voids one real envelope |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -165,10 +166,23 @@ npm run probe:docusign:setup     # writes supabase/functions/.env + Vault secret
 |---|---|
 | `npm run probe:docusign:proof:send` | `All checks passed` (13). Section B needs `DOCUSIGN_TEST_SIGNER_EMAIL` in `.env.local` and sends **2 real agreements** there |
 | Host opted in, guest books with **your** email | within seconds an email "Please sign: your booking with …" (check spam); the document lists host, guest, time(s) |
-| Dashboard / History | History: "DocuSign sent the agreement to …"; booking still "awaiting signature" (signing is handled in stage 3) |
+| Dashboard / History | History: "DocuSign sent the agreement to …"; booking still "awaiting signature" (signing confirms it: stage 3) |
 | Recurring booking (`/probes/recurring`, Stage 2, 2 weeks) on an opt-in host | **one** email listing both weeks |
 | Studio: `select guest_name, status, signature_status, envelope_id, signature_error from bookings order by created_at desc` | `sent` + an envelope id; on problems `failed` + the error |
 | Studio: `select id, status_code, error_msg from net._http_response order by id desc` | did the database's call reach the function? (`200` = yes) |
+
+### Stage 3: receiving the result
+
+| Do | Expect |
+|---|---|
+| `npm run probe:docusign:proof:receive` | `All checks passed` (19). Section B sends + voids **1 real envelope** to `DOCUSIGN_TEST_SIGNER_EMAIL` (2 emails) |
+| **Sign for real:** host opted in, guest books with **your** email, open the email, **Review Document → Sign → Finish** | DocuSign "completed" email |
+| Then as host: Dashboard → **Check signature status** | "Checked 1: 1 signed …"; the slot shows "Booked by …" (green); guest page shows "Booked" instead of "Held for you" |
+| History | "DocuSign · <guest> signed the agreement: booking on … confirmed" |
+| **Decline instead:** in the email, **Other Actions → Decline to Sign**, then Check signature status | booking cancelled, slot free again; History "… declined the agreement …" |
+| Check signature status with nothing out | "No agreements are waiting." |
+
+The webhook (`docusign-webhook`) can't receive real DocuSign messages locally (needs a public URL); the proof script sends it simulated, correctly signed ones.
 
 ## Troubleshooting
 

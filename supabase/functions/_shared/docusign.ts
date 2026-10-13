@@ -74,9 +74,35 @@ export async function createEnvelope(opts: { subject: string; html: string; docu
         }],
       },
       status: 'sent', // send right away (not a draft)
+      // Stage 3: ask DocuSign to report the result to our webhook. Only possible with a public
+      // URL (hosted project or tunnel), so only when DOCUSIGN_WEBHOOK_URL is set. includeHMAC
+      // signs each message with the account's Connect key (DocuSign admin → Connect → Connect Keys).
+      ...(Deno.env.get('DOCUSIGN_WEBHOOK_URL') ? {
+        eventNotification: {
+          url: Deno.env.get('DOCUSIGN_WEBHOOK_URL'),
+          deliveryMode: 'SIM',
+          events: ['envelope-completed', 'envelope-declined', 'envelope-voided'],
+          eventData: { version: 'restv2.1' },
+          includeHMAC: 'true',
+          requireAcknowledgment: 'true',
+        },
+      } : {}),
     }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(`DocuSign create envelope: HTTP ${res.status} ${body.errorCode ?? ''} ${body.message ?? ''}`.trim())
   return body.envelopeId
 }
+
+// Stage 3: the envelope's current status ('sent', 'delivered', 'completed', 'declined', 'voided', …).
+export async function getEnvelopeStatus(envelopeId: string): Promise<string> {
+  const c = config()
+  const res = await fetch(`${c.baseUri}/restapi/v2.1/accounts/${c.accountId}/envelopes/${encodeURIComponent(envelopeId)}`, {
+    headers: { Authorization: `Bearer ${await getAccessToken()}` },
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(`DocuSign get envelope: HTTP ${res.status} ${body.errorCode ?? ''} ${body.message ?? ''}`.trim())
+  return body.status
+}
+
+export const accountId = () => config().accountId

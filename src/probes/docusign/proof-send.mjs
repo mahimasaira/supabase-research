@@ -7,12 +7,11 @@
 // address while it runs. Section B creates REAL envelopes (DocuSign emails them) and only
 // runs when DOCUSIGN_TEST_SIGNER_EMAIL is set in .env.local; nothing is sent anywhere else.
 import { createClient } from '@supabase/supabase-js'
-import { createPrivateKey, sign } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { bookRecurringRpc } from '../../services/supabase/recurring/rpc.js'
 import { listAuditHistory } from '../../services/supabase/audit/history.js'
 import { groupHistory } from '../../features/audit/history.js'
+import { docusign } from './docusign-api.mjs'
 
 const DB = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
 const HOST = '11111111-1111-4111-8111-111111111111'
@@ -115,7 +114,7 @@ if (!TEST_EMAIL) {
     `${single} ${singleRow[1]}${/Missing environment variable/.test(singleRow[1]) ? '  (restart npm run functions:serve after the setup)' : ''}`)
 
   if (singleRow[0]) {
-    const envelope = await docusignGet(`/envelopes/${singleRow[0]}?include=recipients`)
+    const envelope = await docusign('GET', `/envelopes/${singleRow[0]}?include=recipients`)
     check('DocuSign has the envelope: status sent, addressed to the test email',
       envelope.status === 'sent' && envelope.recipients?.signers?.[0]?.email?.toLowerCase() === TEST_EMAIL.toLowerCase(),
       JSON.stringify({ status: envelope.status, error: envelope.errorCode }))
@@ -144,19 +143,3 @@ psql(`update profiles set require_signature = false where id = '${HOST}'`)
 console.log(`\n${failures === 0 ? 'All checks passed' : `${failures} check(s) FAILED`} (test data reset)`)
 process.exit(failures ? 1 : 0)
 
-// ---- DocuSign API from Node (same JWT grant as scripts/docusign-check.mjs) ----
-async function docusignGet(path) {
-  const env = (n) => (process.env[n] ?? '').trim().replace(/^["']|["']$/g, '')
-  const authServer = env('DOCUSIGN_AUTH_SERVER').replace(/^https?:\/\//, '').replace(/\/+$/, '')
-  const b64 = (d) => Buffer.from(JSON.stringify(d)).toString('base64url')
-  const now = Math.floor(Date.now() / 1000)
-  const unsigned = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ iss: env('DOCUSIGN_INTEGRATION_KEY'), sub: env('DOCUSIGN_USER_ID'), aud: authServer, iat: now, exp: now + 600, scope: 'signature impersonation' })}`
-  const assertion = `${unsigned}.${sign('sha256', Buffer.from(unsigned), createPrivateKey(readFileSync(env('DOCUSIGN_PRIVATE_KEY_PATH'), 'utf8'))).toString('base64url')}`
-  const token = await fetch(`https://${authServer}/oauth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }),
-  }).then((r) => r.json())
-  const base = env('DOCUSIGN_BASE_URI').replace(/\/+$/, '').replace(/\/restapi$/, '')
-  return fetch(`${base}/restapi/v2.1/accounts/${env('DOCUSIGN_ACCOUNT_ID')}${path}`, { headers: { Authorization: `Bearer ${token.access_token}` } }).then((r) => r.json())
-}

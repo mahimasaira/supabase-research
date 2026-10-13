@@ -89,3 +89,14 @@ export async function setSignatureRequirement(hostId, required) {
   if (data.length === 0) throw new Error('Setting not saved (not your profile?)')
   return data[0].require_signature
 }
+
+// ---- DocuSign, stage 3: ask DocuSign about the host's agreements that are still out ----
+// result: { checked, signed, cancelled, waiting, errors }
+export async function checkSignatureStatus() {
+  const { data, error } = await supabase.functions.invoke('docusign-sync')
+  if (error) {
+    const body = await error.context?.json?.().catch(() => null)
+    throw new Error(body?.error ?? error.message)
+  }
+  return data
+}

@@ -112,7 +112,7 @@ async function cancelBooking(booking) {
     </section>
 
     <ProfileCard :user-id="user.id" />
-    <SignatureSetting :user-id="user.id" />
+    <SignatureSetting :user-id="user.id" @changed="load" />
 
     <p v-if="error" class="rounded bg-red-50 p-2 text-red-700">{{ error }}</p>
 

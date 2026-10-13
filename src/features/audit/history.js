@@ -29,7 +29,9 @@ function describeEntry(e) {
   const c = e.changes ?? {}
   switch (e.action) {
     case 'booking.created': return `booked ${bookingSlot(e)} for ${guest(e)}${c.guest_email ? ` (${c.guest_email})` : ''}`
-    case 'booking.cancelled': return `cancelled ${guest(e)}'s booking on ${bookingSlot(e)}`
+    case 'booking.cancelled':
+      if (c.signature_status) return describeSignature(e, c) // declined / voided agreement
+      return `cancelled ${guest(e)}'s booking on ${bookingSlot(e)}`
     case 'booking.deleted': return `removed ${guest(e)}'s booking on ${bookingSlot(e)}`
     case 'booking.updated':
       if (c.signature_status) return describeSignature(e, c)
@@ -54,6 +56,9 @@ function describeSignature(e, c) {
   switch (c.signature_status.to) {
     case 'sending': return null
     case 'sent': return `sent the agreement to ${guest(e)} for ${bookingSlot(e)}`
+    case 'completed': return `${guest(e)} signed the agreement: booking on ${bookingSlot(e)} confirmed`
+    case 'declined': return `${guest(e)} declined the agreement: booking on ${bookingSlot(e)} cancelled`
+    case 'voided': return `the agreement was voided: ${guest(e)}'s booking on ${bookingSlot(e)} cancelled`
     case 'failed': return `could not send the agreement for ${guest(e)}'s booking on ${bookingSlot(e)}${c.signature_error?.to ? `: ${c.signature_error.to}` : ''}`
     default: return `agreement for ${guest(e)}'s booking on ${bookingSlot(e)}: ${c.signature_status.to}`
   }
@@ -84,7 +89,7 @@ function describeGroup(entries) {
   }
   if (entries.length === 1) return describeEntry(entries[0])
   // e.g. DocuSign sent one agreement for all weeks of a series: show it once.
-  if (entries.every((e) => e.action === 'booking.updated' && e.changes?.signature_status)) {
+  if (entries.every((e) => (e.action === 'booking.updated' || e.action === 'booking.cancelled') && e.changes?.signature_status)) {
     const first = [...entries].sort((a, b) => (a.context?.slot_starts_at ?? '').localeCompare(b.context?.slot_starts_at ?? ''))[0]
     const text = describeEntry(first)
     return text && `${text} (+${entries.length - 1} more week${entries.length > 2 ? 's' : ''})`
