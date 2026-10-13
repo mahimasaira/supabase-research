@@ -156,6 +156,14 @@ Spam test host: `spam-host@test.dev` / `password123`, booking page `/book/222222
 - [ ] Code: the advisory lock + count + `raise … errcode = 'PT429'` in the trigger
 - **Takeaway:** limits slow attackers down but can't tell humans from bots; shared IPs and host lock-out hurt real guests.
 
+### Stage 3: CAPTCHA via an Edge Function · commit: (not committed yet)
+- [ ] Proof: `evidence/*_probe-spam-proof-captcha.txt` (every bypass → 403, flood → 0 of 50, humans → 201)
+- [ ] Dashboard: "Require a CAPTCHA" ticked
+- [ ] Booking page with the Turnstile box ("Success!" with the test key) above "Book this slot"
+- [ ] curl / console: direct insert → `403 "This host requires a CAPTCHA check"`
+- [ ] Code: `bookings_check_captcha` (current_user + `app.captcha_verified`) and `applyCaller()` in `_shared/caller.ts`
+- **Takeaway:** the CAPTCHA itself is a few lines; closing every other way in is the real work.
+
 ---
 
 ## Final pass (after all features)

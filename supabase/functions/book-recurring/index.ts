@@ -8,52 +8,18 @@
 // From then on the same grants and RLS policies apply as for supabase-js in the browser.
 //
 // verify_jwt is off for this function (supabase/config.toml): the built-in check accepts the
-// publishable key without saying who the caller is, so this function does the check itself.
+// publishable key without saying who the caller is, so this function does the check itself
+// (supabase/functions/_shared/caller.ts).
 import '@supabase/functions-js/edge-runtime.d.ts'
-import { createClient } from '@supabase/supabase-js'
 import postgres from 'postgres'
+// Identity, client IP, CAPTCHA and applying them to a transaction: shared with book-slot.
+import { applyCaller, clientIp, cors, identify, reply, statusFor, verifyCaptcha } from '../_shared/caller.ts'
 
 const WEEK_MS = 7 * 24 * 3600_000 // same as split.js and the SQL function (168 hours)
 
 // One connection per function instance. prepare: false keeps it compatible with
 // Supabase's transaction pooler (port 6543), which hosted projects should use.
 const sql = postgres(Deno.env.get('SUPABASE_DB_URL')!, { max: 1, prepare: false })
-
-// Only used to verify JWTs (getClaims checks signature + expiry against the project's JWKS).
-const auth = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
-  auth: { persistSession: false },
-}).auth
-const publishableKeys = Object.values(JSON.parse(Deno.env.get('SUPABASE_PUBLISHABLE_KEYS') ?? '{}'))
-
-const cors = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
-const reply = (status: number, body: unknown) => Response.json(body, { status, headers: cors })
-
-type Identity = { role: 'anon' | 'authenticated'; claims: Record<string, unknown> }
-
-// Who is calling? Returns an identity, or an error Response.
-async function identify(req: Request): Promise<Identity | Response> {
-  const apikey = req.headers.get('apikey') ?? ''
-  const bearer = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? ''
-
-  // Every request must come from this project's own frontend (publishable key).
-  if (!publishableKeys.includes(apikey)) return reply(401, { error: 'Missing or unknown apikey' })
-
-  // No login: supabase-js sends the publishable key itself as the bearer token.
-  // That's not a JWT, it's an anonymous guest.
-  if (!bearer || bearer === apikey) return { role: 'anon', claims: { role: 'anon' } }
-
-  // Otherwise it must be a JWT that Supabase Auth signed.
-  const { data, error } = await auth.getClaims(bearer)
-  if (error || !data) return reply(401, { error: 'Invalid or expired token' })
-  const role = data.claims.role
-  // Never accept service_role (or anything else) here: it would bypass RLS.
-  if (role !== 'anon' && role !== 'authenticated') return reply(403, { error: `Role "${role}" not allowed` })
-  return { role, claims: data.claims as Record<string, unknown> }
-}
 
 type Input = { hostId: string; firstStartsAt: string; weeks: number; guestName: string; guestEmail: string }
 
@@ -77,8 +43,19 @@ Deno.serve(async (req) => {
 
   const who = await identify(req)
   if (who instanceof Response) return who
-  const input = parseInput(await req.json().catch(() => null))
+  const body = await req.json().catch(() => null)
+  const input = parseInput(body)
   if (!input) return reply(400, { error: 'Expected { hostId, firstStartsAt, weeks, guestName, guestEmail }' })
+
+  // Spam protection stage 3: hosts can require a CAPTCHA. A token is optional here; without a
+  // valid one, the database refuses the bookings for those hosts (bookings_check_captcha).
+  const ip = clientIp(req)
+  let captchaVerified = false
+  if (body?.captchaToken !== undefined) {
+    const captcha = await verifyCaptcha(body.captchaToken, ip)
+    if (!captcha.ok) return reply(403, { ok: false, error: { code: 'captcha_failed', message: 'The CAPTCHA check failed.', details: captcha.codes } })
+    captchaVerified = true
+  }
 
   const first = new Date(input.firstStartsAt)
   const seriesId = crypto.randomUUID()
@@ -88,10 +65,10 @@ Deno.serve(async (req) => {
   try {
     await tx`begin`
 
-    // Apply the caller's identity for THIS transaction only (is_local = true):
-    // the same two settings PostgREST makes for every API request.
-    await tx`select set_config('role', ${who.role}, true),
-                    set_config('request.jwt.claims', ${JSON.stringify(who.claims)}, true)`
+    // Apply the caller for THIS transaction only (is_local = true): role + JWT claims, as
+    // PostgREST does for every API request, plus (since spam protection) the client IP for the
+    // rate limits and the CAPTCHA mark.
+    await applyCaller(tx, who, ip, captchaVerified)
     ;[ranAs] = await tx`select current_user as role, auth.uid() as uid`
 
     // 1. Enough weeks offered from this date? As anon, RLS only shows free future slots.
@@ -136,8 +113,8 @@ Deno.serve(async (req) => {
   } catch (err) {
     await tx`rollback` // undoes the series and every week already inserted
     if (err instanceof BookingRejected) return reply(err.status, { ok: false, ...err.body, ranAs })
-    // Database errors (e.g. 23514 invalid email): pass the code on, like PostgREST does.
-    if (err.code) return reply(400, { ok: false, error: { code: err.code, message: err.message }, ranAs })
+    // Database errors: pass the code on, like PostgREST does (429 rate limit, 403 CAPTCHA, …).
+    if (err.code) return reply(statusFor(err.code), { ok: false, error: { code: err.code, message: err.message }, ranAs })
     console.error(err)
     return reply(500, { ok: false, error: { message: 'Internal error' } })
   } finally {

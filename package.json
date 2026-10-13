@@ -28,6 +28,8 @@
     "probe:spam:seed": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -q -v ON_ERROR_STOP=1 -f src/probes/spam/sql/seed.sql",
     "probe:spam:flood": "node --env-file=.env.local src/probes/spam/flood.mjs",
     "probe:spam:proof:limits": "node --env-file=.env.local src/probes/spam/proof-limits.mjs",
+    "probe:spam:setup": "node --env-file=.env.local src/probes/spam/setup-local.mjs",
+    "probe:spam:proof:captcha": "node --env-file=.env.local src/probes/spam/proof-captcha.mjs",
     "evidence": "node scripts/evidence.mjs",
     "test:clean": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \"delete from auth.users where email like '%@test.dev'\""
   },

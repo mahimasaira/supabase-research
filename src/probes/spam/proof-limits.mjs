@@ -115,7 +115,7 @@ psql(`insert into bookings (slot_id, guest_name, guest_email, cancel_token)
   select id, 'Direct ' || n, 'direct' || n || '@example.com', gen_random_uuid()
     from (select id, row_number() over (order by starts_at) as n from slots where host_id = '${HOST}' and not is_booked limit 3) s`)
 const viaOwner = Number(psql(`select count(*) from bookings where guest_name like 'Direct %'`))
-check(`WEAKNESS no HTTP request, no IP: ${viaOwner} bookings over a direct connection (Studio, Edge Functions) aren't IP-limited`, viaOwner === 3)
+check(`WEAKNESS no HTTP request, no IP: ${viaOwner} bookings over a direct database connection (Studio, scripts) aren't IP-limited`, viaOwner === 3)
 const fnUp = await fetch(`${URL}/functions/v1/book-recurring`, { method: 'OPTIONS', signal: AbortSignal.timeout(15000) }).then((r) => r.ok).catch(() => false)
 if (fnUp) {
   const viaFn = []
@@ -127,8 +127,10 @@ if (fnUp) {
       body: JSON.stringify({ hostId: HOST, firstStartsAt: first, weeks: 2, guestName: `Fn ${rand()}`, guestEmail: `fn-${rand()}@example.com` }),
     }).then((r) => r.status))
   }
-  check(`WEAKNESS the Edge Function path (book-recurring) has no IP either: ${viaFn.filter((s) => s === 409 || s === 200).length} of 2 calls got past the IP limit of 1 (it would have to forward the IP itself)`,
-    viaFn.every((s) => s !== 429), JSON.stringify(viaFn))
+  // Stage 2 showed this as a WEAKNESS (both calls got past an IP limit of 1). Since stage 3 the
+  // function forwards the client IP (supabase/functions/_shared/caller.ts), so the 2nd call is refused.
+  check(`the Edge Function path (book-recurring) forwards the guest's IP: 2nd call → 429 (was a weakness until stage 3)`,
+    viaFn[1] === 429, JSON.stringify(viaFn))
 } else {
   console.log('SKIP  Edge Function path: functions serve is not running')
 }

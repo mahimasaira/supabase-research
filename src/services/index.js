@@ -15,4 +15,5 @@ export const {
   bookSlotLogged, cancelAsGuestLogged, cancelAsHostLogged, deleteSlotLogged, logAuditEventFromClient,
   listAuditHistory,
   getSignatureRequirement, setSignatureRequirement, checkSignatureStatus,
+  getCaptchaRequirement, setCaptchaRequirement, bookSlot,
 } = backend

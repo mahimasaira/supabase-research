@@ -140,6 +140,7 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `npm run probe:docusign:proof:failures` | `All checks passed` (17); ~2 min; section 5 sends + voids one real envelope |
 | `npm run probe:spam:flood` | `SKIP` since stage 2 (limits stop it); stage 1 output in `evidence/` |
 | `npm run probe:spam:proof:limits` | `All checks passed` (15) |
+| `npm run probe:spam:proof:captcha` | `All checks passed` (15); needs `functions:serve` |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -224,6 +225,21 @@ Since stage 2 the flood script prints `SKIP` (the limits stop it); its stage 1 o
 | Book 11 slots of the spam host quickly (any emails) | 11th: "This host is receiving too many bookings right now…" |
 | Studio: `select * from rate_limit_settings` | current limits; change them to experiment (`npm run probe:spam:seed` restores defaults) |
 | Studio: `select host_id, ip_hash, created_at from booking_rate_events order by created_at desc` | hashed IPs only; rows older than a day are removed hourly |
+
+### Stage 3: CAPTCHA (Cloudflare Turnstile test keys)
+
+One-time: `npm run probe:spam:setup` (puts the test secret into `supabase/functions/.env`), `npm run functions:serve` running.
+
+| Do | Expect |
+|---|---|
+| `npm run probe:spam:proof:captcha` | `All checks passed` (15) |
+| Log in as `spam-host@test.dev`, tick **Require a CAPTCHA** | stays ticked after reload |
+| Log out, open the spam host's booking page, pick a slot | a Cloudflare "Success!" box (test key passes automatically); **Book this slot** enabled only after it |
+| Book | "Booked: …" as usual |
+| Browser console / curl: direct insert into `bookings` for that host | `403` "This host requires a CAPTCHA check" |
+| Untick the setting | no widget; booking works as before |
+
+With the test keys every check passes; real bot detection needs real keys from the Cloudflare dashboard (`VITE_TURNSTILE_SITE_KEY` in `.env.local`, `TURNSTILE_SECRET_KEY` via `probe:spam:setup`).
 
 ## Troubleshooting
 

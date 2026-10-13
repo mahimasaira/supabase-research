@@ -7,6 +7,7 @@ import { formatSlot } from '@/lib/format'
 import { useSlotChannel } from '@/composables/useSlotChannel'
 import ProfileCard from '@/components/ProfileCard.vue'
 import SignatureSetting from '@/features/docusign/SignatureSetting.vue'
+import CaptchaSetting from '@/features/spam/CaptchaSetting.vue'
 
 const { user } = useAuth()
 
@@ -113,6 +114,7 @@ async function cancelBooking(booking) {
 
     <ProfileCard :user-id="user.id" />
     <SignatureSetting :user-id="user.id" @changed="load" />
+    <CaptchaSetting :user-id="user.id" />
 
     <p v-if="error" class="rounded bg-red-50 p-2 text-red-700">{{ error }}</p>
 

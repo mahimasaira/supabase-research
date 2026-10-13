@@ -7,6 +7,8 @@ import { formatDate, formatRange, formatSlot } from '@/lib/format'
 import { forgetGuestBooking, loadGuestBookings, rememberGuestBooking } from '@/lib/guestBookings'
 import { useSlotChannel } from '@/composables/useSlotChannel'
 import { avatarUrl } from '@/lib/avatars'
+import { bookSlot } from '@/services'
+import CaptchaWidget from '@/features/spam/CaptchaWidget.vue'
 
 const route = useRoute()
 const hostId = route.params.hostId
@@ -18,7 +20,7 @@ const notFound = ref(false)
 const error = ref('')
 
 async function loadHost() {
-  const { data, error: err } = await supabase.from('profiles').select('display_name, avatar_path').eq('id', hostId).maybeSingle()
+  const { data, error: err } = await supabase.from('profiles').select('display_name, avatar_path, require_captcha').eq('id', hostId).maybeSingle()
   // A malformed id gives a 22P02 (invalid uuid) error; treat it the same as "no such host".
   if (err || !data) notFound.value = true
   else host.value = data
@@ -90,6 +92,9 @@ const guestEmail = ref('')
 const booking = ref(false)
 const bookError = ref('')
 const confirmation = ref(null)
+// Spam protection (feature 3): hosts can require a CAPTCHA; the token is single-use.
+const captchaToken = ref('')
+const captcha = ref(null)
 
 async function book() {
   bookError.value = ''
@@ -98,13 +103,16 @@ async function book() {
   // cancel token itself and sends it along. No .select() after insert, on purpose.
   const cancelToken = crypto.randomUUID()
   const slot = selected.value
-  const { error: err } = await supabase.from('bookings').insert({
-    slot_id: slot.id,
-    guest_name: guestName.value,
-    guest_email: guestEmail.value,
-    cancel_token: cancelToken,
+  // Through the services layer: directly, or via the book-slot Edge Function with the CAPTCHA token.
+  const { error: err } = await bookSlot({
+    slotId: slot.id,
+    guestName: guestName.value,
+    guestEmail: guestEmail.value,
+    cancelToken,
+    captchaToken: host.value.require_captcha ? captchaToken.value : undefined,
   })
   booking.value = false
+  if (host.value.require_captcha) captcha.value?.reset() // a token can't be used twice
   if (err) {
     // 42501: insert policy failed, the slot is no longer free (or no longer in the future).
     // 23505: two guests submitted at the same moment and the unique index picked the other one.
@@ -113,6 +121,7 @@ async function book() {
       42501: taken,
       23505: taken,
       23514: 'Please check your name and email.',
+      captcha_failed: 'The CAPTCHA check failed. Please try again.',
     })
     if (err.code === '42501' || err.code === '23505') {
       selected.value = null
@@ -244,7 +253,8 @@ async function cancel(b) {
       <p class="font-medium">{{ formatSlot(selected) }}</p>
       <input v-model="guestName" class="input" placeholder="Your name" required maxlength="100" />
       <input v-model="guestEmail" class="input" type="email" placeholder="Your email" required />
-      <button class="btn" :disabled="booking">{{ booking ? 'Booking…' : 'Book this slot' }}</button>
+      <CaptchaWidget v-if="host.require_captcha" ref="captcha" @token="captchaToken = $event" />
+      <button class="btn" :disabled="booking || (host.require_captcha && !captchaToken)">{{ booking ? 'Booking…' : 'Book this slot' }}</button>
     </form>
     <p v-if="bookError" class="text-red-700">{{ bookError }}</p>
   </div>

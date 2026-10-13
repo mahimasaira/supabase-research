@@ -100,3 +100,32 @@ export async function checkSignatureStatus() {
   }
   return data
 }
+
+// ---- spam protection (feature 3), stage 3: CAPTCHA ----
+export async function getCaptchaRequirement(hostId) {
+  const { data, error } = await supabase.from('profiles').select('require_captcha').eq('id', hostId).single()
+  if (error) throw error
+  return data.require_captcha
+}
+
+export async function setCaptchaRequirement(hostId, required) {
+  const { data, error } = await supabase.from('profiles').update({ require_captcha: required }).eq('id', hostId).select('require_captcha')
+  if (error) throw error
+  if (data.length === 0) throw new Error('Setting not saved (not your profile?)')
+  return data[0].require_captcha
+}
+
+// One booking by a guest. With a CAPTCHA token (hosts who require one) it goes through the Edge
+// Function book-slot, which verifies the token; otherwise straight into the bookings table.
+// Either way the result is { error } with the database's error code (42501 taken, PT429 rate
+// limit, PT403 CAPTCHA required, captcha_failed, …), so the page handles both the same.
+export async function bookSlot({ slotId, guestName, guestEmail, cancelToken, captchaToken }) {
+  if (!captchaToken) {
+    const { error } = await supabase.from('bookings').insert({ slot_id: slotId, guest_name: guestName, guest_email: guestEmail, cancel_token: cancelToken })
+    return { error }
+  }
+  const { error } = await supabase.functions.invoke('book-slot', { body: { slotId, guestName, guestEmail, cancelToken, captchaToken } })
+  if (!error) return { error: null }
+  const body = await error.context?.json?.().catch(() => null)
+  return { error: body?.error ?? { code: 'network', message: error.message } }
+}
