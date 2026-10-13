@@ -54,6 +54,15 @@ update public.rate_limit_settings r set
   from saved_limits s where r.id = s.id;
 delete from public.booking_rate_events where host_id = '33333333-3333-4333-8333-333333333333';
 
+-- Stage 2: an empty queue and dead-letter archive (if the queue exists).
+do $$ begin
+  if exists (select 1 from pgmq.list_queues() where queue_name = 'reminders') then
+    perform pgmq.purge_queue('reminders');
+    delete from pgmq.a_reminders;
+  end if;
+exception when invalid_schema_name or undefined_function then null; -- pgmq not installed (stage 1)
+end $$;
+
 commit;
 
 select case when (select count(*) from public.bookings b join public.slots s on s.id = b.slot_id

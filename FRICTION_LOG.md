@@ -551,3 +551,30 @@ Planned stages: 1. show the problem (naive scheduled loop), 2. Supabase Queues (
 - **Surprising:** that an HTTP 504 didn't stop anything, and that a "finished" scheduled job (pg_cron only queues the request) says nothing about whether any email went out.
 - **Time spent:** ~70 min (incl. the time-limit run and the runaway function)
 - **Backend needed?** Not decided yet: stage 2 tests Supabase's own queue (`pgmq`) as the fix.
+
+## Stage 2: Supabase Queues (pgmq) make reminders reliable
+- **Step:** Advanced 5, stage 2
+- **What happened:** Two steps connected by a queue (migration `20261013224858_reminders_queue.sql`, Edge Function `process-reminders`). `enqueue_reminders()` (hourly) puts one pgmq message per due reminder and marks the booking `reminder_queued_at` in the same transaction. The worker reads small batches (pgmq hides them from other workers for `vt` seconds), skips cancelled/past/already-reminded bookings, sends, then **marks + deletes the message in one transaction**; failed messages reappear and are retried; after 5 reads they go to the archive (dead letter); the worker stops itself after a time budget and hands unprocessed messages back. Both jobs are created **switched off**. Proof `npm run probe:reminders:proof:queue`: **11/11**, the stage 1 scenarios again:
+
+| Scenario | Stage 1 (naive loop) | Stage 2 (queue) |
+|---|---|---|
+| Quiet day | 200 emails | 200 emails |
+| Crash after 120, then the next run | **120 guests twice** | **0 twice** (the 120 were recorded one by one) |
+| Crash between sending and recording | (same as above) | **1** twice: only the email in flight |
+| Slow provider via the scheduler | caller timeout, result unknown or cut off | runs of ≤ 20 s, each answers; 200 guests, 0 twice |
+| Two runs at once | **200 guests twice** | 0 twice (each message goes to one worker) |
+| One long call | 504, then sends in the background for minutes | returns on its budget; nothing sent after it returned |
+| Overlapping enqueue runs | n/a | each reminder queued once |
+| Booking cancelled after queuing | n/a | skipped, no reminder |
+| One address always fails | would fail the whole run | 199 sent, 1 dead letter in `pgmq.a_reminders` |
+
+- **The runtime cuts workers off anyway.** Locally the Edge runtime sometimes **terminated a worker on its own** (HTTP 546; log "CPU time soft limit reached" / "early termination") after ~90–130 emails in one call, even though the code would have stopped at its budget. With the queue that's harmless: unfinished messages come back and the next run continues. The proof accepts it and reports it. In the naive design the same termination meant lost or duplicate emails.
+- **At-least-once, not exactly-once.** A crash or termination *between* sending and recording repeats that one email. A queue can't close that gap alone: exactly-once needs the email provider's idempotency key (e.g. a per-booking key the provider deduplicates on). The window shrinks from "the whole run" (stage 1: 120 twice) to "one email".
+- **pgmq is "just Postgres":** the queue is a table, so enqueuing + marking the booking is one transaction, and the archive is queryable in Studio (`select * from pgmq.a_reminders`). Compared with DocuSign stage 4, where retries, backoff, attempt counting and stuck detection were hand-built, pgmq gives visibility timeout, read counts and archiving for free. Still hand-built: the worker loop, the time budget, the dead-letter rule and the scheduler wiring.
+- **Gotchas:** `pgmq.send` returns a set, so it can't go inside `count(...)` (use `from …, lateral pgmq.send(…)`). pgmq functions are overloaded (`delete(queue, id)` vs `delete(queue, ids[])`), so calls from the Edge Function with untyped parameters fail ("function is not unique") until every argument is cast.
+- **Test friction:** timing-dependent behaviour. The worst-case and slow-provider checks failed once each before they were written to accept the runtime's own terminations (546) next to the planned crash. Running a scenario three times in a row showed the 546 in one of three.
+- **Code:** migration 70 lines (pgmq, queue, `reminder_queued_at`, enqueue, scheduler wrapper, 2 jobs off), worker 125, seed +10 (purge queue), setup +3, proof ~170, 1 npm script.
+- **Testing / debugging:** Good: the queue state is plain SQL (`pgmq.metrics`, `pgmq.q_reminders`, `pgmq.a_reminders`), Mailpit counts per guest. Hardest: deciding what a "pass" is when the runtime may stop a worker at any time.
+- **Surprising:** that the local Edge runtime terminates fairly modest workloads (~100 emails with short waits), so any design that assumes one call finishes its loop is fragile.
+- **Time spent:** ~80 min
+- **Backend needed?** Not for a reliable queue: pgmq + pg_cron + one Edge Function is enough. A backend's job-queue library would add an exactly-once helper only if the provider supports idempotency keys, and better observability (dashboard, alerts) out of the box.

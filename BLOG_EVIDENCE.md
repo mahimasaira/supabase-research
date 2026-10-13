@@ -188,6 +188,14 @@ Test host: `reminder-host@test.dev` / `password123`, 200 bookings in ~24 h. Rese
 - [ ] Code: the naive loop + "mark all at the end" in `supabase/functions/send-reminders/index.ts`
 - **Takeaway:** a scheduled loop in one function has no memory of what it did: crashes, timeouts and overlaps turn into lost or duplicate emails.
 
+### Stage 2: Supabase Queues (pgmq) · commit: (not committed yet)
+- [ ] Proof: `evidence/*_probe-reminders-proof-queue.txt` (the stage 1 scenarios with 0 duplicates; worst case 1)
+- [ ] The stage 1 vs. stage 2 table from FRICTION_LOG.md
+- [ ] Studio: `pgmq.metrics('reminders')` during a run (queue shrinking), and `pgmq.a_reminders` with the dead letter
+- [ ] Mailpit: each guest exactly once after a crash + retry (compare with the stage 1 screenshot of two identical reminders)
+- [ ] Code: "mark as sent + delete the message" in one transaction, and the time-budget / `set_vt(…, 0)` hand-back in `process-reminders`
+- **Takeaway:** a queue turns "a loop that must finish" into "small steps that can stop anywhere"; exactly-once still needs the email provider.
+
 ---
 
 ## Final pass (after all features)

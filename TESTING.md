@@ -143,6 +143,7 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `npm run probe:spam:proof:captcha` | `All checks passed` (15); needs `functions:serve` |
 | `npm run probe:spam:compare` | comparison table + `All checks passed` (8); ~2 min |
 | `npm run probe:reminders:naive` | `All problems reproduced` (feature 5, stage 1: shows the problem); ~1.5 min |
+| `npm run probe:reminders:proof:queue` | `All checks passed` (11); ~2 min |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -263,6 +264,18 @@ Separate test host `reminder-host@test.dev` / `password123` with 200 confirmed b
 | Seed, then in Studio: `select public.run_reminders('{"hostId": "33333333-3333-4333-8333-333333333333"}')` | 200 reminders in Mailpit; open one: host, time (UTC), cancel link |
 
 The script deletes only its own test emails (`…@reminder-test.example`) from Mailpit afterwards.
+
+### Stage 2: Supabase Queues (pgmq)
+
+| Do | Expect |
+|---|---|
+| `npm run probe:reminders:proof:queue` (~2 min, needs `functions:serve`) | `All checks passed` (11): crash → 0 twice (worst case 1), overlapping workers → 0 twice, long run returns on time, cancelled skipped, failing address → 1 dead letter |
+| Seed, then in Studio: `select public.enqueue_reminders('33333333-3333-4333-8333-333333333333')` | `200`; again → `0` (queued once) |
+| Studio: `select * from pgmq.metrics('reminders')` / `select * from pgmq.q_reminders limit 5` | the queue: length, messages with `read_ct` and `vt` |
+| Studio: `select public.process_reminders()`, wait a few seconds | 200 reminders in Mailpit; `pgmq.metrics` → 0 |
+| Studio: `select * from pgmq.a_reminders` | the archive (dead letters after a failing address) |
+
+Both jobs (`enqueue-reminders` hourly, `process-reminders` every minute) exist but are **switched off**; to try the real schedule: `select cron.alter_job(jobid, active := true) from cron.job where jobname in ('enqueue-reminders', 'process-reminders')` (switch off again afterwards, or every booking 23–25 h ahead gets a reminder in Mailpit).
 
 ## Troubleshooting
 
