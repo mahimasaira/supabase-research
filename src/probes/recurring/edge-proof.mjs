@@ -100,7 +100,10 @@ await new Promise((resolve) => setTimeout(resolve, 500))
 const t0 = Date.now()
 res = await bookRecurringEdge(anon, input(monday(1), 3))
 await otherDone
-check(`week 3 reported "just taken" (waited ${Date.now() - t0} ms)`, res.clash?.week === 3 && res.clash?.reason === 'just taken', JSON.stringify(res))
+// Since spam protection stage 2, bookings for the same host also wait for each other on an
+// advisory lock, so the wait can happen at week 1 already: week 3 is then "not available"
+// instead of "just taken". Either way the clash is in week 3 and everything rolls back.
+check(`week 3 clashes: "${res.clash?.reason}" (waited ${Date.now() - t0} ms)`, res.clash?.week === 3 && ['just taken', 'not available'].includes(res.clash?.reason), JSON.stringify(res))
 check('rolled back: 0 series, weeks 1-2 still free', count('booking_series') === 0 && count("bookings where guest_name = 'Probe Guest'") === 0)
 
 // ---------------------------------------------------------------------------

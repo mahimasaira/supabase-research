@@ -6,6 +6,7 @@
 --   * spam-host@test.dev / password123  (fixed id 22222222-…)
 --   * 50 free slots: the next 10 days, 09:00–14:00 UTC, one per hour
 --   * require_signature off (the flood script switches it on for round D)
+--   * since stage 2: rate-limit counters emptied and limits back to their defaults
 -- Runs as the database owner (postgres), so RLS doesn't apply here.
 
 begin;
@@ -39,6 +40,15 @@ select '22222222-2222-4222-8222-222222222222', t, t + interval '45 minutes'
   from generate_series(1, 10) as d,
        generate_series(9, 13) as h,
        lateral (select ((current_date + d) + make_interval(hours => h)) at time zone 'UTC' as t) x;
+
+-- Stage 2: start with a clean rate-limit state and the default limits (if installed).
+do $$ begin
+  if to_regclass('public.booking_rate_events') is not null then
+    delete from public.booking_rate_events;
+    delete from public.rate_limit_settings;
+    insert into public.rate_limit_settings default values;
+  end if;
+end $$;
 
 commit;
 

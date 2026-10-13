@@ -30,6 +30,15 @@ process.on('exit', () => {
   vaultUrls.forEach((n) => saved[n] && setUrl(n, saved[n]))
 })
 
+// Since stage 2 the database limits bookings, so this demonstration no longer reproduces.
+if (psql(`select to_regclass('public.rate_limit_settings') is not null`) === 't') {
+  console.log('SKIP  rate limits are installed (spam protection stage 2), so the flood is stopped now.')
+  console.log('      See npm run probe:spam:proof:limits. The stage 1 run is saved in evidence/;')
+  console.log('      to reproduce it: git checkout e508979, then npm run db:reset (wipes local data).')
+  process.removeAllListeners('exit')
+  process.exit(0)
+}
+
 let failures = 0
 function check(name, ok, detail) {
   if (!ok) failures++

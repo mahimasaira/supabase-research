@@ -138,7 +138,8 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `npm run probe:docusign:proof:send` | `All checks passed` (13); section B sends real emails to `DOCUSIGN_TEST_SIGNER_EMAIL` |
 | `npm run probe:docusign:proof:receive` | `All checks passed` (19); section B sends + voids one real envelope |
 | `npm run probe:docusign:proof:failures` | `All checks passed` (17); ~2 min; section 5 sends + voids one real envelope |
-| `npm run probe:spam:flood` | `All problems reproduced` (feature 3, stage 1: shows the problem) |
+| `npm run probe:spam:flood` | `SKIP` since stage 2 (limits stop it); stage 1 output in `evidence/` |
+| `npm run probe:spam:proof:limits` | `All checks passed` (15) |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -211,6 +212,18 @@ Separate test host `spam-host@test.dev` / `password123` with 50 slots: `npm run 
 | Log in as `spam-host@test.dev` → Dashboard | 50 bookings by "Bot …" |
 
 The script resets the spam host afterwards and switches DocuSign sending back on only after the fake bookings are gone.
+
+Since stage 2 the flood script prints `SKIP` (the limits stop it); its stage 1 output is in `evidence/`.
+
+### Stage 2: limits inside the database
+
+| Do | Expect |
+|---|---|
+| `npm run probe:spam:proof:limits` | `All checks passed` (15): attacks stopped (10 of 50, 3 per email), fake IP headers don't help, WEAKNESS checks pass (= demonstrated) |
+| As a guest, book the same host 4 times with the same email | 4th: "You already have 3 active bookings with this host." |
+| Book 11 slots of the spam host quickly (any emails) | 11th: "This host is receiving too many bookings right now…" |
+| Studio: `select * from rate_limit_settings` | current limits; change them to experiment (`npm run probe:spam:seed` restores defaults) |
+| Studio: `select host_id, ip_hash, created_at from booking_rate_events order by created_at desc` | hashed IPs only; rows older than a day are removed hourly |
 
 ## Troubleshooting
 

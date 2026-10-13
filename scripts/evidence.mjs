@@ -21,6 +21,7 @@ const ALL = [
   'probe:docusign:proof:receive',
   'probe:docusign:proof:failures',
   'probe:spam:flood',
+  'probe:spam:proof:limits',
 ]
 const args = process.argv.slice(2)
 const noEmail = args.includes('--no-email')

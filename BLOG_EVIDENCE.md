@@ -147,6 +147,15 @@ Spam test host: `spam-host@test.dev` / `password123`, booking page `/book/222222
 - [ ] Code: the 4 lines that do it (`Promise.all(slots.map(… insert …))`) to show how little an attacker needs
 - **Takeaway:** RLS decides who may write, not how often; anonymous guests are indistinguishable.
 
+### Stage 2: limits in the database · commit: (not committed yet)
+- [ ] Proof: `evidence/*_probe-spam-proof-limits.txt` (attacks stopped + WEAKNESS checks)
+- [ ] The race: `evidence/2026-10-13_spam-stage2-BEFORE-advisory-lock_…txt` (14 of max 10 got through) next to the fixed run (exactly 10)
+- [ ] Booking page: the 429 message after the 4th booking with one email, and after the host limit
+- [ ] Studio: `rate_limit_settings` and `booking_rate_events` (hashed IPs only)
+- [ ] Terminal: `X-Forwarded-For: 6.6.6.6` showing up as the *first* entry (`request.headers`), i.e. why only the last entry is trusted (snippet in FRICTION_LOG stage 2)
+- [ ] Code: the advisory lock + count + `raise … errcode = 'PT429'` in the trigger
+- **Takeaway:** limits slow attackers down but can't tell humans from bots; shared IPs and host lock-out hurt real guests.
+
 ---
 
 ## Final pass (after all features)
