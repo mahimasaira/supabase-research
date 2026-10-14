@@ -204,6 +204,13 @@ Test host: `reminder-host@test.dev` / `password123`, 200 bookings in ~24 h. Rese
 - [ ] Code: the 429 branch (put back as a fresh message) and `handBack` with the read_ct comment in `process-reminders`
 - **Takeaway:** sending politely (pace, one worker, back off on 429) is your job; and a queue's retry counter can drop healthy work if you hand messages back the naive way.
 
+### Stage 4: the three versions compared · commit: (not committed yet)
+- [ ] The comparison table from `evidence/*_probe-reminders-compare.txt` (or rendered from FRICTION_LOG.md)
+- [ ] Highlight the rows "Crash after 120" (120 / 0 / 0) and "Provider limit" (14 / 170 / 200)
+- **Takeaway:** each stage fixes a different kind of bad day; the price is speed (1 s → 30 s for 200 emails).
+
+- [ ] **Summary table** "Bulk reminders: the stages compared"
+
 ---
 
 ## Final pass (after all features)

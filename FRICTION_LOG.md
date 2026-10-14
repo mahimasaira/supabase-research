@@ -593,3 +593,35 @@ Planned stages: 1. show the problem (naive scheduled loop), 2. Supabase Queues (
 - **Surprising:** that "unsubscribe" pulled in an email standard with its own HTTP rules (POST, no auth), and that a queue's retry counter can silently drop healthy work.
 - **Time spent:** ~85 min
 - **Backend needed?** No new kind: one more tiny public Edge Function (one-click unsubscribe). Pacing, the single-worker lease and throttling are hand-built on Postgres; a backend job-queue library usually ships rate limiting ("limiter") and concurrency control as options.
+
+## Stage 4: the three versions compared
+- **Step:** Advanced 5, stage 4
+- **What happened:** `npm run probe:reminders:compare` runs the same scenarios against the naive loop (stage 1), the queue with stage 2 settings, and the queue with limits (stage 3). After each first run, "the scheduler's next run" happens as in practice (naive: one more run; queues: workers until empty). 6/6 expected-pattern checks pass:
+
+| Scenario | Naive loop (stage 1) | Queue (stage 2) | Queue + limits (stage 3) |
+|---|---|---|---|
+| Quiet day: time until all 200 sent | 200/200 in 1.3 s | 200/200 in 5.1 s | 200/200 in 30.2 s (paced at 10/s) |
+| Crash after 120, then the next run | **120 guests twice** | 0 twice | 0 twice |
+| Two runs at the same time | **200 guests twice** | 0 twice | 0 twice |
+| Provider limit 20/s, two runs at once | **14/200 reminded**, 6 twice | **170/200**, 30 dead letters | **200/200** |
+| Guest opted out after queuing | reminded anyway | not reminded | not reminded |
+| Booking cancelled before sending | not reminded | not reminded | not reminded |
+
+- **Reading the table:** the naive loop is the fastest on a quiet day and wrong on every bad day. The queue fixes duplicates and lost work from crashes and overlaps; the limits fix what an external provider does to you (throttling), at the price of speed: 200 reminders take ~30 s instead of ~1 s, which is fine for a nightly job but shows that "polite" sending is slow by design. (The naive loop "respects" cancellations only because it queries at send time; the opt-out check exists only in the worker.)
+- **Code:** naive function +8 lines (optional test provider, for this comparison), comparison script ~180 lines, 1 npm script.
+- **Time spent:** ~30 min
+- **Backend needed?** See the feature summary below.
+
+### Bulk reminders: the stages compared
+
+| | 1. Naive loop | 2. Supabase Queues | 3. Opt-out + sending limits | 4. Compare |
+|---|---|---|---|---|
+| Built with | pg_cron + pg_net + one Edge Function | pgmq + pg_cron + Edge Function worker | + lease table, pacing, 429 handling, opt-out table, 2 small Edge Functions (one-click unsubscribe, test provider) | comparison script |
+| Supabase alone (browser + DB)? | ❌ sending email needs server code | ❌ | ❌ | n/a |
+| Duplicates after a crash / overlap | 120 / 200 | 0 (at most 1 per runtime stop) | 0 | |
+| Survives provider throttling | ❌ | ❌ (healthy reminders dead-lettered) | ✅ | |
+| Hardest part | three different limits ending the loop (caller, gateway, runtime); a runaway function | runtime terminating workers (546); pgmq overloads | pgmq counts reads, not failures; new defaults breaking older tests | |
+| Proof | 4 problems (+ time limit) | 11 checks | 15 checks | 6 checks |
+| Time | ~70 min | ~80 min | ~85 min | ~30 min |
+
+**For the blog:** Supabase can run a reliable bulk-email job without a separate server: pg_cron schedules, pgmq queues (visibility timeout, read counts, archive), Edge Functions send. But it's assembled by hand: the worker loop, time budget, lease, pacing, throttling and the dead-letter rule are all ours, and the Edge runtime's limits (caller timeout, gateway 504, CPU/wall-clock termination) shape the design. A backend job-queue library (e.g. BullMQ) ships most of this as configuration (concurrency, rate limiter, retries with backoff, dashboard). Exactly-once delivery needs the email provider's idempotency key either way. **Total feature time: ~4 h 25 min.**

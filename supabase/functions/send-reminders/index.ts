@@ -18,23 +18,29 @@ const APP_URL = Deno.env.get('APP_URL') ?? 'http://127.0.0.1:5173'
 const secretKeys = [
   ...Object.values(JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}')),
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
-].filter(Boolean)
+].filter(Boolean) as string[]
 const fmt = new Intl.DateTimeFormat('en-GB', { dateStyle: 'full', timeStyle: 'short', timeZone: 'UTC' })
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-async function sendEmail(to: { email: string; name: string }, subject: string, text: string) {
-  const res = await fetch(`${MAILPIT}/api/v1/send`, {
+// provider 'test' (feature 5, stage 4 comparison only): send through the rate-limited test provider
+// (Edge Function test-mail-provider) instead of Mailpit directly. Still naive: a refusal (429) is
+// just an error that ends the loop.
+const TEST_PROVIDER = Deno.env.get('TEST_MAIL_PROVIDER_URL') ?? 'http://kong:8000/functions/v1/test-mail-provider'
+
+async function sendEmail(to: { email: string; name: string }, subject: string, text: string, provider = 'mailpit') {
+  const [url, auth] = provider === 'test' ? [TEST_PROVIDER, { Authorization: `Bearer ${secretKeys[0]}` }] : [`${MAILPIT}/api/v1/send`, {}]
+  const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...auth },
     body: JSON.stringify({ From: { Email: 'reminders@booking.local', Name: 'Booking reminders' }, To: [{ Email: to.email, Name: to.name }], Subject: subject, Text: text }),
   })
-  if (!res.ok) throw new Error(`Mailpit: HTTP ${res.status}`)
+  if (!res.ok) throw new Error(`email provider: HTTP ${res.status}`)
 }
 
 Deno.serve(async (req) => {
   const bearer = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? ''
   if (!bearer || !secretKeys.includes(bearer)) return Response.json({ error: 'Not allowed' }, { status: 401 })
-  const { hostId = null, crashAfter = null, delayMs = 0 } = await req.json().catch(() => ({}))
+  const { hostId = null, crashAfter = null, delayMs = 0, provider = 'mailpit' } = await req.json().catch(() => ({}))
   const started = Date.now()
 
   // 1. Tomorrow's bookings that haven't been reminded yet.
@@ -59,6 +65,7 @@ Deno.serve(async (req) => {
       `Reminder: your booking with ${b.host} tomorrow`,
       `Hi ${b.guest_name},\n\nThis is a reminder of your booking with ${b.host} on ${fmt.format(b.starts_at)} (UTC).\n\n` +
         `Can't make it? Cancel here: ${APP_URL}/cancel/${b.cancel_token}\n`,
+      provider,
     )
     sent++
   }

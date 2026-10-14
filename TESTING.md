@@ -145,6 +145,7 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `npm run probe:reminders:naive` | `All problems reproduced` (feature 5, stage 1: shows the problem); ~1.5 min |
 | `npm run probe:reminders:proof:queue` | `All checks passed` (11); ~2 min |
 | `npm run probe:reminders:proof:optout` | `All checks passed` (15); ~3 min |
+| `npm run probe:reminders:compare` | comparison table + `All checks passed` (6); ~4 min |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -285,6 +286,12 @@ The script deletes only its own test emails (`…@reminder-test.example`) from M
 | Open that link in the browser → **Stop reminders** | "Done. You will no longer receive booking reminder emails…" |
 | `select public.enqueue_reminders('33333333-3333-4333-8333-333333333333')` afterwards | that guest isn't queued (199) |
 | Studio: `select limit_per_second from test_mail_provider_settings` / `select accepted, count(*) from test_mail_provider_log group by 1` | the test provider's limit, accepted vs. refused (429) |
+
+### Stage 4: the three versions compared
+
+| Do | Expect |
+|---|---|
+| `npm run probe:reminders:compare` (~4 min, needs `functions:serve`) | a table naive / queue / queue + limits and `All checks passed` (6): crash → 120 / 0 / 0 twice, overlap → 200 / 0 / 0 twice, provider limit → 14 / 170 / 200 reminded |
 
 Both jobs (`enqueue-reminders` hourly, `process-reminders` every minute) exist but are **switched off**; to try the real schedule: `select cron.alter_job(jobid, active := true) from cron.job where jobname in ('enqueue-reminders', 'process-reminders')` (switch off again afterwards, or every booking 23–25 h ahead gets a reminder in Mailpit).
 
