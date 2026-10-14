@@ -625,3 +625,18 @@ Planned stages: 1. show the problem (naive scheduled loop), 2. Supabase Queues (
 | Time | ~70 min | ~80 min | ~85 min | ~30 min |
 
 **For the blog:** Supabase can run a reliable bulk-email job without a separate server: pg_cron schedules, pgmq queues (visibility timeout, read counts, archive), Edge Functions send. But it's assembled by hand: the worker loop, time budget, lease, pacing, throttling and the dead-letter rule are all ours, and the Edge runtime's limits (caller timeout, gateway 504, CPU/wall-clock termination) shape the design. A backend job-queue library (e.g. BullMQ) ships most of this as configuration (concurrency, rate limiter, retries with backoff, dashboard). Exactly-once delivery needs the email provider's idempotency key either way. **Total feature time: ~4 h 25 min.**
+
+---
+
+# Advanced feature 6: weekly availability & time zones (skipped)
+
+**Decision (2026-10-14): not built.** The feature (hosts set "Mon–Fri 09:00–17:00, 30-min slots, Europe/Berlin" once and slots are created automatically; times shown in each person's time zone) would mostly show where Supabase is **enough**, not where it falls short, so it wouldn't add much to the blog's question. What planning it found:
+
+- **Postgres handles time zones well.** It ships the full IANA time-zone database: `('2026-10-26 09:00' at time zone 'Europe/Berlin')` gives the right UTC instant on either side of a daylight-saving change, including the hour that doesn't exist (spring) and the one that happens twice (autumn). Generating a host's slots from weekly rules would be a few lines of SQL (`generate_series` + `at time zone`) plus a nightly job. No backend needed.
+- **One real Supabase limitation: scheduled jobs only run in UTC.** `cron.timezone` is `GMT`, it's a server-start setting (`postmaster`), and the `postgres` role isn't allowed to change it (checked locally). A job meant to run "every day at 06:00 Berlin time" fires at 06:00 UTC, i.e. 07:00 or 08:00 in Berlin depending on the season. Workaround: schedule hourly and let the job decide whether it's the right local hour, or keep jobs time-zone-independent (e.g. "create slots for the next 8 weeks", safe to run at any time).
+- **The server doesn't know an anonymous guest's time zone.** Guests have no account, so emails can only show the guest's local time if the browser sends its zone with the booking (`Intl.DateTimeFormat().resolvedOptions().timeZone`). Same root cause as in features 3 and 5: anonymous guests carry no profile.
+- **Two small bugs in our own code, noted, not fixed:**
+  - **Recurring bookings drift by an hour across a clock change.** Feature 1 repeats a booking every 168 hours in UTC (`book_recurring`, `split.js`, `book-recurring`). The test host's Mondays (10:00 UTC) are 12:00 Berlin time on 19 Oct but 11:00 on 26 Oct (summer time ends 25 Oct 2026). Fix: store the series as "weekday + local time + host time zone" and compute each week with `at time zone`. Not a Supabase issue.
+  - **Emails show UTC times.** Reminders (feature 5) and DocuSign agreements (feature 4) format times in UTC because the guest's zone isn't stored. Fix: store the guest's browser time zone with the booking and format with it.
+- **Time spent:** ~30 min (planning, checking `cron.timezone`, this entry)
+- **Backend needed?** **No.** Postgres covers the hard part; the only Supabase-specific gap is UTC-only scheduling, which has simple workarounds.

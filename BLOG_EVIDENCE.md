@@ -213,6 +213,15 @@ Test host: `reminder-host@test.dev` / `password123`, 200 bookings in ~24 h. Rese
 
 ---
 
+## Feature 6: Weekly availability & time zones (skipped)
+
+Not built; reasoning in FRICTION_LOG.md. Optional evidence for the "where Supabase is enough" point:
+- [ ] Studio: `select ('2026-10-19 12:00'::timestamp at time zone 'Europe/Berlin'), ('2026-10-26 12:00'::timestamp at time zone 'Europe/Berlin')` → 10:00 UTC and 11:00 UTC (Postgres knows the clock change)
+- [ ] Studio: `show cron.timezone` → `GMT` (scheduled jobs run in UTC only)
+- **Takeaway:** time zones are a strength of Postgres; the only gap is UTC-only scheduling.
+
+---
+
 ## Final pass (after all features)
 
 - [ ] Commit everything, then `npm run evidence -- all` (sends a few real DocuSign emails) for clean, commit-labelled outputs
