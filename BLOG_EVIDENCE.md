@@ -196,6 +196,14 @@ Test host: `reminder-host@test.dev` / `password123`, 200 bookings in ~24 h. Rese
 - [ ] Code: "mark as sent + delete the message" in one transaction, and the time-budget / `set_vt(…, 0)` hand-back in `process-reminders`
 - **Takeaway:** a queue turns "a loop that must finish" into "small steps that can stop anywhere"; exactly-once still needs the email provider.
 
+### Stage 3: opt-out + sending limits · commit: (not committed yet)
+- [ ] Proof: `evidence/*_probe-reminders-proof-optout.txt` (B1: ~200 refusals → ~25 healthy reminders dead-lettered; B2: 200/200, 0 refusals, 0 dead letters)
+- [ ] Mailpit: a reminder with the unsubscribe link, and its Headers tab (`List-Unsubscribe`, `List-Unsubscribe-Post`)
+- [ ] The unsubscribe page before / after clicking "Stop reminders"
+- [ ] Studio: `test_mail_provider_log` grouped by accepted (B1 vs. B2)
+- [ ] Code: the 429 branch (put back as a fresh message) and `handBack` with the read_ct comment in `process-reminders`
+- **Takeaway:** sending politely (pace, one worker, back off on 429) is your job; and a queue's retry counter can drop healthy work if you hand messages back the naive way.
+
 ---
 
 ## Final pass (after all features)

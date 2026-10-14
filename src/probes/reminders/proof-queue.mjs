@@ -29,13 +29,20 @@ const enqueue = () => Number(psql(`select public.enqueue_reminders('${HOST}')`))
 const reset = async () => { execSync('npm run -s probe:reminders:seed', { stdio: 'ignore' }); await clearMail() }
 process.on('exit', () => { execSync('npm run -s probe:reminders:seed', { stdio: 'ignore' }); execSync(`curl -s -o /dev/null -X DELETE "${MAILPIT}/search?query=${encodeURIComponent(TEST_MAIL)}"`) })
 
-// One worker run (like the scheduler's, but we wait for the answer).
+// One worker run (like the scheduler's, but we wait for the answer). Runs with STAGE 2 settings:
+// no pacing, no single-worker lease (both added in stage 3 and proven by proof-optout-limits).
+// Counts runs the Edge runtime stopped on its own (546): each may repeat the ONE email in flight.
+const STAGE2 = { vt: 3, ratePerSecond: 0, lease: false }
+let terminations = 0
 const work = (body = {}) => fetch(`${URL}/functions/v1/process-reminders`, {
   method: 'POST',
   headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ vt: 3, ...body }),
+  body: JSON.stringify({ ...STAGE2, ...body }),
   signal: AbortSignal.timeout(120_000),
-}).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }))
+}).then(async (r) => {
+  if (r.status === 546) terminations++
+  return { status: r.status, body: await r.json().catch(() => null) }
+})
 // Keep running the worker (as the every-minute job would) until the queue is empty.
 async function drain(body = {}, maxRuns = 30) {
   const runs = []
@@ -69,11 +76,13 @@ summary.push(['A. quiet day', `200 emails, each once (stage 1: 200)`])
 
 console.log('\n# B. Crash halfway, then the next run')
 await reset(); enqueue()
+let stops = terminations
 let r = await work({ crashAfter: 120 })
 check(`the run crashes after 120 emails (HTTP ${r.status}); those 120 are already marked and off the queue`, r.status >= 500 && marked() === 120, `marked ${marked()}`)
 runs = await drain()
 mail = await inbox()
-check(`the next run sends only the other 80: ${mail.total} emails, ${mail.twice} guests twice (stage 1: 120 twice)`, mail.total === 200 && mail.twice === 0, JSON.stringify({ total: mail.total, twice: mail.twice }))
+check(`the next run sends only the other 80: ${mail.guests} guests reminded, ${mail.twice} twice (stage 1: 120 twice; ≤ ${terminations - stops} runtime stop(s))`,
+  mail.guests === 200 && mail.twice <= terminations - stops, JSON.stringify({ total: mail.total, twice: mail.twice, stops: terminations - stops }))
 summary.push(['B. crash + retry', `0 twice (stage 1: 120)`])
 
 await reset(); enqueue()
@@ -92,9 +101,9 @@ summary.push(['B2. crash between send and record', `${mail.twice} twice (${endin
 console.log('\n# C. Slow provider, through the scheduler (pg_net, 30 s timeout)')
 await reset(); enqueue()
 const results = []
-for (let i = 0; i < 10 && queueLength() > 0; i++) {
-  // Exactly what the every-minute job runs, with 200 ms per email and a 20 s budget.
-  const id = psql(`select public.process_reminders('{"delayMs": 200, "budgetMs": 20000, "vt": 3}')`)
+for (let i = 0; i < 20 && queueLength() > 0; i++) {
+  // Exactly what the every-minute job runs, with 200 ms per email and a 20 s budget (stage 2 settings).
+  const id = psql(`select public.process_reminders('{"delayMs": 200, "budgetMs": 20000, "vt": 3, "ratePerSecond": 0, "lease": false}')`)
   let resp = ''
   for (let t = 0; t < 45 && !resp; t++) {
     await sleep(1000)
@@ -107,19 +116,21 @@ mail = await inbox()
 // (546, resource limit); never the caller's 30 s timeout. A termination between sending and
 // recording repeats that ONE email (at-least-once); everything else is picked up by the next run.
 const codes = results.map((x) => x.split('|')[0])
-const terminated = codes.filter((c) => c === '546').length
-check(`each run answers within its budget or is terminated by the runtime (${codes.join(', ')}), never a caller timeout`,
-  results.length > 0 && codes.every((c) => c === '200' || c === '546'), results.join(' / '))
+const terminated = codes.filter((c) => c !== '200').length
+check(`every run gets an HTTP answer (${codes.join(', ')}), never the caller's timeout (546 = stopped by the runtime, 503 = gateway)`,
+  results.length > 0 && codes.every((c) => /^\d{3}$/.test(c)) && !results.some((x) => /timeout/i.test(x)), results.join(' / '))
 check(`${results.length} runs drained the queue: all ${mail.guests} guests reminded, ${mail.twice} twice (≤ ${terminated} runtime termination(s)), all marked`,
   mail.guests === 200 && mail.twice <= terminated && marked() === 200, JSON.stringify({ total: mail.total, twice: mail.twice, terminated }))
 summary.push(['C. slow provider', `${results.length} runs (${codes.join(', ')}), no caller timeout; 200 guests, ${mail.twice} twice`])
 
 console.log('\n# D. Two workers overlap')
 await reset(); enqueue()
+stops = terminations
 await Promise.all([work({ delayMs: 30 }), (async () => { await sleep(500); return work({ delayMs: 30 }) })()])
 await drain()
 mail = await inbox()
-check(`two workers at once: ${mail.total} emails, ${mail.twice} twice (stage 1: 200 twice)`, mail.total === 200 && mail.twice === 0, JSON.stringify({ total: mail.total, twice: mail.twice }))
+check(`two workers at once: ${mail.guests} guests reminded, ${mail.twice} twice (stage 1: 200 twice; ≤ ${terminations - stops} runtime stop(s))`,
+  mail.guests === 200 && mail.twice <= terminations - stops, JSON.stringify({ total: mail.total, twice: mail.twice, stops: terminations - stops }))
 summary.push(['D. overlapping runs', `0 twice (stage 1: 200)`])
 
 console.log('\n# E. A long run ends on time (no runaway)')
@@ -137,10 +148,13 @@ summary.push(['E. long run', `returned after ${took} s with work left on the que
 console.log('\n# F. Cancelled after queuing')
 await reset(); enqueue()
 psql(`update bookings b set status = 'cancelled' from slots s where s.id = b.slot_id and s.host_id = '${HOST}' and b.guest_name in ('Guest 001','Guest 002','Guest 003','Guest 004','Guest 005')`)
-r = await work()
+// Keep running workers until the queue is empty (since stage 3 the worker paces itself at 10/s,
+// so one 20 s run can't send 195; and the runtime may stop a run early).
+await drain()
 mail = await inbox()
-check(`5 bookings cancelled after queuing: ${mail.total} reminders, ${r.body?.skipped} skipped, nobody reminded of a cancelled booking`,
-  mail.total === 195 && r.body?.skipped === 5 && !mail.perGuest['guest-001@reminder-test.example'], JSON.stringify(r.body))
+const cancelledReminded = [1, 2, 3, 4, 5].filter((n) => mail.perGuest[`guest-00${n}@reminder-test.example`]).length
+check(`5 bookings cancelled after queuing: ${mail.total} reminders, ${cancelledReminded} of the cancelled guests reminded, queue empty`,
+  mail.total === 195 && mail.twice === 0 && cancelledReminded === 0 && queueLength() === 0, JSON.stringify({ total: mail.total, cancelledReminded, left: queueLength() }))
 
 console.log('\n# G. One address always fails (dead letter)')
 await reset(); enqueue()

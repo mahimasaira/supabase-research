@@ -26,6 +26,7 @@ const ALL = [
   'probe:spam:compare',
   'probe:reminders:naive',
   'probe:reminders:proof:queue',
+  'probe:reminders:proof:optout',
 ]
 const args = process.argv.slice(2)
 const noEmail = args.includes('--no-email')

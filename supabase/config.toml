@@ -501,3 +501,25 @@ entrypoint = "./functions/process-reminders/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/process-reminders/*.html" ]
+
+[functions.reminders-unsubscribe]
+enabled = true
+verify_jwt = false
+import_map = "./functions/reminders-unsubscribe/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/reminders-unsubscribe/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/reminders-unsubscribe/*.html" ]
+
+[functions.test-mail-provider]
+enabled = true
+verify_jwt = false
+import_map = "./functions/test-mail-provider/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/test-mail-provider/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/test-mail-provider/*.html" ]

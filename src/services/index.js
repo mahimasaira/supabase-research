@@ -16,4 +16,5 @@ export const {
   listAuditHistory,
   getSignatureRequirement, setSignatureRequirement, checkSignatureStatus,
   getCaptchaRequirement, setCaptchaRequirement, bookSlot,
+  unsubscribeReminders,
 } = backend

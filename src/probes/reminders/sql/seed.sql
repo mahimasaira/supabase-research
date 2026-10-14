@@ -63,6 +63,18 @@ do $$ begin
 exception when invalid_schema_name or undefined_function then null; -- pgmq not installed (stage 1)
 end $$;
 
+-- Stage 3: test guests subscribed again, worker lease free, test provider log empty + default limit.
+do $$ begin
+  if to_regclass('public.reminder_optouts') is not null then
+    delete from public.reminder_optouts
+     where email_hash in (select public.reminder_email_hash('guest-' || lpad(n::text, 3, '0') || '@reminder-test.example')
+                            from generate_series(1, 200) n);
+    update public.reminder_worker_lease set holder = null, expires_at = '-infinity';
+    delete from public.test_mail_provider_log;
+    update public.test_mail_provider_settings set limit_per_second = 20;
+  end if;
+end $$;
+
 commit;
 
 select case when (select count(*) from public.bookings b join public.slots s on s.id = b.slot_id

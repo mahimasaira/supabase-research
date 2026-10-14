@@ -129,3 +129,11 @@ export async function bookSlot({ slotId, guestName, guestEmail, cancelToken, cap
   const body = await error.context?.json?.().catch(() => null)
   return { error: body?.error ?? { code: 'network', message: error.message } }
 }
+
+// ---- bulk reminders (feature 5), stage 3: stop reminder emails (guest, no account) ----
+// token = the booking's cancel token (from the reminder email). true = opted out.
+export async function unsubscribeReminders(token) {
+  const { data, error } = await supabase.rpc('unsubscribe_reminders', { p_cancel_token: token })
+  if (error) throw error
+  return data
+}

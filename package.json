@@ -35,6 +35,7 @@
     "probe:reminders:setup": "node src/probes/reminders/setup-local.mjs",
     "probe:reminders:naive": "node --env-file=.env.local src/probes/reminders/naive.mjs",
     "probe:reminders:proof:queue": "node --env-file=.env.local src/probes/reminders/proof-queue.mjs",
+    "probe:reminders:proof:optout": "node --env-file=.env.local src/probes/reminders/proof-optout-limits.mjs",
     "evidence": "node scripts/evidence.mjs",
     "test:clean": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \"delete from auth.users where email like '%@test.dev'\""
   },

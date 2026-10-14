@@ -144,6 +144,7 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `npm run probe:spam:compare` | comparison table + `All checks passed` (8); ~2 min |
 | `npm run probe:reminders:naive` | `All problems reproduced` (feature 5, stage 1: shows the problem); ~1.5 min |
 | `npm run probe:reminders:proof:queue` | `All checks passed` (11); ~2 min |
+| `npm run probe:reminders:proof:optout` | `All checks passed` (15); ~3 min |
 
 ### Stage 1: bookings that wait for a signature (no DocuSign calls yet)
 
@@ -274,6 +275,16 @@ The script deletes only its own test emails (`…@reminder-test.example`) from M
 | Studio: `select * from pgmq.metrics('reminders')` / `select * from pgmq.q_reminders limit 5` | the queue: length, messages with `read_ct` and `vt` |
 | Studio: `select public.process_reminders()`, wait a few seconds | 200 reminders in Mailpit; `pgmq.metrics` → 0 |
 | Studio: `select * from pgmq.a_reminders` | the archive (dead letters after a failing address) |
+
+### Stage 3: opt-out + sending limits
+
+| Do | Expect |
+|---|---|
+| `npm run probe:reminders:proof:optout` (~3 min, needs `functions:serve`) | `All checks passed` (15): opt-outs respected (before and after queuing), one-click works, B1 shows the problem (dead letters), B2–B4 the fix (200/200, 0 dead letters) |
+| Open any reminder in Mailpit | text ends with "Don't want reminders? …/reminders/unsubscribe/<token>"; **Headers** tab: `List-Unsubscribe`, `List-Unsubscribe-Post` |
+| Open that link in the browser → **Stop reminders** | "Done. You will no longer receive booking reminder emails…" |
+| `select public.enqueue_reminders('33333333-3333-4333-8333-333333333333')` afterwards | that guest isn't queued (199) |
+| Studio: `select limit_per_second from test_mail_provider_settings` / `select accepted, count(*) from test_mail_provider_log group by 1` | the test provider's limit, accepted vs. refused (429) |
 
 Both jobs (`enqueue-reminders` hourly, `process-reminders` every minute) exist but are **switched off**; to try the real schedule: `select cron.alter_job(jobid, active := true) from cron.job where jobname in ('enqueue-reminders', 'process-reminders')` (switch off again afterwards, or every booking 23–25 h ahead gets a reminder in Mailpit).
 
