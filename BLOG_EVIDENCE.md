@@ -130,7 +130,7 @@ Host: log in, tick **Require a signed agreement** on the Dashboard. Guest: book 
 - [ ] DocuSign **"voided"** email after cancelling a booking
 - [ ] Lost send: stop `functions:serve`, book, start again → agreement arrives within ~2–3 min
 - [ ] Studio: `select jobname, schedule from cron.job` and `cron.job_run_details` with `succeeded`
-- **Takeaway:** no job queue; retries, scheduling and monitoring were hand-built.
+- **Takeaway:** no job runner; retries, scheduling and monitoring were hand-built.
 
 - [ ] **Summary table** "DocuSign: the four stages compared"
 
