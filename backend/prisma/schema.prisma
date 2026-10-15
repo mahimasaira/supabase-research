@@ -1,5 +1,8 @@
-// The NestJS version's database schema. Models are added stage by stage (N2: core tables).
+// The NestJS version's database schema. Models are added stage by stage.
 // Migrations: npm run backend:migrate (from the repo root).
+// Table and column names match the Supabase version (slots, starts_at, …) so both can be compared
+// one to one. Rules Prisma can't express (CHECK constraints, the no-overlap exclusion constraint,
+// the "one confirmed booking per slot" partial index) are added by hand in the migration SQL.
 
 generator client {
   provider     = "prisma-client"
@@ -9,4 +12,69 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// Login data: what Supabase keeps in auth.users. Owned by the auth module only.
+model User {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String         @unique
+  passwordHash  String         @map("password_hash")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  profile       Profile?
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+// One row per issued refresh token (only its hash is stored). Rotated on every refresh.
+model RefreshToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Profile {
+  id          String   @id @db.Uuid
+  displayName String   @default("") @map("display_name")
+  avatarPath  String?  @map("avatar_path")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user        User     @relation(fields: [id], references: [id], onDelete: Cascade)
+  slots       Slot[]
+
+  @@map("profiles")
+}
+
+model Slot {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hostId    String    @map("host_id") @db.Uuid
+  startsAt  DateTime  @map("starts_at") @db.Timestamptz(6)
+  endsAt    DateTime  @map("ends_at") @db.Timestamptz(6)
+  isBooked  Boolean   @default(false) @map("is_booked")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  host      Profile   @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  bookings  Booking[]
+
+  @@index([hostId, startsAt])
+  @@map("slots")
+}
+
+model Booking {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slotId      String    @map("slot_id") @db.Uuid
+  guestName   String    @map("guest_name")
+  guestEmail  String    @map("guest_email")
+  status      String    @default("confirmed")
+  cancelToken String    @unique @default(dbgenerated("gen_random_uuid()")) @map("cancel_token") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  cancelledAt DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  slot        Slot      @relation(fields: [slotId], references: [id], onDelete: Cascade)
+
+  @@map("bookings")
 }

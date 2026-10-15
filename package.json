@@ -51,11 +51,13 @@
     "backend:install": "npm --prefix backend install",
     "backend:db:start": "docker compose -f backend/docker-compose.yml up -d --wait",
     "backend:db:stop": "docker compose -f backend/docker-compose.yml stop",
-    "backend:migrate": "npm --prefix backend exec -- prisma migrate dev",
+    "backend:migrate": "npm --prefix backend run migrate",
+    "backend:db:reset": "npm --prefix backend run migrate:reset",
     "backend:dev": "npm --prefix backend run start:dev",
     "backend:build": "npm --prefix backend run build",
     "scenarios": "node --env-file=.env.local scenarios/run.mjs",
     "scenarios:supabase": "node --env-file=.env.local scenarios/run.mjs --backend supabase",
+    "scenarios:nestjs": "node --env-file=.env.local scenarios/run.mjs --backend nestjs",
     "test:clean": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \"delete from auth.users where email like '%@test.dev'\""
   },
   "dependencies": {

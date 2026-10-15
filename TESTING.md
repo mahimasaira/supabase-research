@@ -333,6 +333,17 @@ The scan fails with "not reviewed" when a new table, function or Edge Function a
 | `npm run scenarios -- --backend nestjs` | "Backend "nestjs" not available: … built in stage N2" (exit 2) |
 | Optional mutation test: in Studio `grant select on public.bookings to anon; create policy t on public.bookings for select to anon using (true);`, run both tests, then `drop policy t on public.bookings; revoke select on public.bookings from anon;` | both: 55/60, the same 5 FAILs; afterwards 60/60 again |
 
+### N2: NestJS core
+
+| Do | Expect |
+|---|---|
+| `npm run backend:db:start`, `npm run backend:migrate`, `npm run backend:dev` | API on 127.0.0.1:3000 |
+| `npm run scenarios:nestjs` | `46/46 passed, 17 skipped (backend: nestjs)`; the SKIP lines name the reason (Supabase mechanics, live updates / avatars not built yet) |
+| `npm run scenarios:supabase` | `63/63 passed` (core permissions 60 + core concurrency 3) |
+| `VERBOSE=1 npm run scenarios:nestjs` | for every refused attack, the HTTP status and reason (401 / 403 / 404 / 400 / 409) |
+| `curl -X POST 127.0.0.1:3000/slots -H 'Content-Type: application/json' -d '{}'` | 401 "Log in first" (every route is closed unless marked public) |
+| Reset the NestJS database | `npm run backend:db:reset` (drops all data, re-applies migrations) |
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |

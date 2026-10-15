@@ -768,3 +768,31 @@ NestJS app from the official CLI (`@nestjs/cli` 12.0.8 generated a NestJS **11**
 - **Files:** `scenarios/` (~410 lines incl. README), root `package.json` (+2 scripts), `scripts/evidence.mjs` (+1 entry).
 - **Testing/debugging:** easy; one run takes ~10 s. The hand-made mutation test is the useful part and should be repeated for each ported feature.
 - **Time spent:** ~45 min (shared: counts for neither version)
+
+## N2: NestJS core (login, profiles, slots, bookings)
+
+What the Supabase core does, rebuilt: own login (sign up, log in, refresh, log out; scrypt password hashes; 15-min JWT access tokens + rotating refresh tokens stored as hashes), profiles, slots, bookings, host cancel, guest cancel by token, status lookup. Prisma schema with the same table/column names as Supabase; migration `backend/prisma/migrations/*_core`. NestJS adapter `scenarios/adapters/nestjs.mjs`; new shared feature `scenarios/features/core-concurrency.mjs`.
+
+**Result: `npm run scenarios:nestjs` → 46/46 passed, 17 skipped** (2 Supabase mechanics, 4 live updates and 11 avatars: N4). Supabase on the same tests: 63/63. Every refusal was checked for its *reason* (401 guest, 403/404 other host, 400 forbidden field, 409 booked slot), not just "it failed"; a mutation (all slots visible to everyone) was caught.
+
+**How the same rules look in each version:**
+
+| Rule | Supabase | NestJS |
+|---|---|---|
+| Who may read/change rows | RLS policies (SQL), per table | Checks in service code, per endpoint |
+| Which fields a client may send | Column grants | DTO classes + `ValidationPipe({ whitelist, forbidNonWhitelisted })`: unknown field → 400 |
+| Closed by default | RLS on + no policy = no access | A global guard: every route needs a login unless marked `@Public()` / `@OptionalAuth()` |
+| Operations that don't exist | Every table and function is reachable unless revoked | **Only written endpoints exist** (deleting a booking, calling an internal function → 404 "Cannot DELETE …") |
+| A refused change | **Success with 0 rows**, no message | An explicit 4xx with a reason ("A booked slot cannot be moved") |
+| Slot marked booked | One trigger catches every path | Set in code in **three places** (book, host cancel, guest cancel), each in a transaction with a row lock; a future path that forgets it is a bug the database won't catch |
+| Double booking / overlaps | Partial unique index, exclusion constraint | **The same SQL**, hand-added to the Prisma migration (Prisma can't express CHECK, exclusion or partial unique constraints) |
+| Login | Supabase Auth (built in) | ~150 lines: hashing, tokens, refresh rotation, reuse detection (*platform*) |
+
+- **Surprises:**
+  - **A bug of mine, found by the new race test:** 10 parallel overlapping slots → 1 created, 9 answered **500**. The database refused them correctly, but the error helper took Prisma's own code `P2039` for a Postgres code (both 5 characters) and never reached the real one (`23P01`, in `meta.driverAdapterError.cause.originalCode`). Fixed; now 409. The original `test-rls.mjs` has no parallel checks, so `core-concurrency` was added as a shared feature and runs on both backends (Supabase passes it too).
+  - **N0's `backend:migrate` script never worked:** `npm --prefix backend exec` runs from the repo root, where Prisma can't find the schema. N0 had no migration to run, so it went unnoticed. Now a script inside `backend/` (+ `backend:db:reset`).
+  - **`@nestjs/jwt` 12 (4 days old) is for NestJS 12;** the CLI template is NestJS 11, so `@nestjs/jwt@11` was pinned by hand. Version mismatches between the CLI template and the latest packages are a recurring small cost.
+  - **A difference found while porting:** on Supabase a host can read their guests' **cancel tokens** (the core grants SELECT on all booking columns), so a host could cancel or unsubscribe as the guest. The NestJS API never returns tokens to hosts.
+- **Files:** `backend/src/{auth,profiles,slots,bookings,common}` + schema + migration + adapter + shared feature: ~870 lines. Root `package.json` (+2 scripts).
+- **Testing/debugging:** easy. Errors are ordinary stack traces in one process; the shared runner gave a precise target. Restarting the API after a build is manual (or `backend:dev` watches).
+- **Time spent:** ~2 h 30 min: ~1 h *platform* (login: hashing, tokens, refresh rotation, guard; migration tooling fix), ~1 h 30 min core rules + adapter + tests

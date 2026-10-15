@@ -261,6 +261,14 @@ Not built; reasoning in FRICTION_LOG.md. Optional evidence for the "where Supaba
 - [ ] Optional: the mutation test output (both 55/60, same 5 FAILs)
 - **Takeaway:** the comparison is only fair if both backends face the same tests; the runner is proven on Supabase before NestJS exists.
 
+### N2: NestJS core · commit: (not committed yet)
+- [ ] Proof: `evidence/*_scenarios-nestjs.txt` (46/46, 17 skipped) next to `evidence/*_scenarios-supabase.txt` (63/63)
+- [ ] Terminal: `VERBOSE=1 npm run scenarios:nestjs`: refusals with reasons (vs. Supabase's silent "0 rows")
+- [ ] Code side by side: the RLS policy "Hosts move their own unbooked slots" vs. `SlotsService.update` (lock, own, not booked, future)
+- [ ] Code: `UpdateBookingDto` (`@IsIn(['cancelled'])`) vs. the Supabase column grant `grant update (status)`
+- [ ] Code: the hand-written constraints at the end of the Prisma migration (same SQL as Supabase's init schema)
+- **Takeaway:** the same rules move from SQL policies to service code; refusals become explicit and only written endpoints exist, but "keep is_booked in sync" is now three code paths instead of one trigger.
+
 ---
 
 ## Final pass (after all features)
