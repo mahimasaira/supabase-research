@@ -7,7 +7,10 @@ import { PrismaClient } from '../generated/prisma/client';
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   constructor() {
-    super({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+    const url = process.env.DATABASE_URL;
+    // Without this check a missing URL silently falls back to a database named after the OS user.
+    if (!url) throw new Error('DATABASE_URL is not set (backend/.env, see backend/.env.example)');
+    super({ adapter: new PrismaPg({ connectionString: url }) });
   }
 
   async onModuleInit() {
