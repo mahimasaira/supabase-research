@@ -231,17 +231,18 @@ Not built; reasoning in FRICTION_LOG.md. Optional evidence for the "where Supaba
 
 ### Step 2: exposure scan
 - [ ] Proof BEFORE the fix: the `evidence/*_probe-security-scan.txt` with exit 1 (2 FAILs: "30 empty booking series … 30 accepted", "40 bookings … via 4 made-up series: 40 accepted")
-- [ ] Proof AFTER: the newest `evidence/*_probe-security-scan.txt` (107 checks, all passed)
+- [ ] Proof AFTER: the newest `evidence/*_probe-security-scan.txt` (115 checks, all passed)
 - [ ] Terminal screenshot of section 1 (the table × role matrix: can / should)
 - [ ] Code: `bookings_check_series` in `20261014212615_security_fixes.sql`
 - **Takeaway:** every insertable column is public API; the hole was a column combination no screen uses.
 
 ### Step 3: SQL injection
-- [ ] Proof: `evidence/*_probe-security-sqli.txt` (19 checks)
+- [ ] Proof: `evidence/*_probe-security-sqli.txt` (24 checks)
 - [ ] Terminal screenshot of section 2 (other hosts' bookings, all account emails, Vault secrets counted)
+- [ ] Terminal screenshot of section 3 next to it: the same injection as SECURITY INVOKER (own 2 bookings only; auth.users / Vault refused; but an HTTP request sent via pg_net)
 - [ ] Code side by side: the concatenated `EXECUTE` in `sqli_search_bookings_unsafe` vs. `execute format(… %I) using …` in the safe one
 - [ ] The two locks: the `revoke` in the migration + the `sqli_probe_switch` check
-- **Takeaway:** supabase-js is parameterised; a single string-built `EXECUTE` in a `SECURITY DEFINER` function exposes the whole database through `rpc()`.
+- **Takeaway:** supabase-js is parameterised; injection + `SECURITY DEFINER` exposes everything the owner can reach, injection + `SECURITY INVOKER` stays within RLS and grants (which still include pg_net).
 
 - [ ] **Summary table** "Security review: summary" (FRICTION_LOG.md)
 

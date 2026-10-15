@@ -70,7 +70,7 @@ npm run test:clean && npm run probe:audit:seed && npm run probe:spam:seed && npm
 | | `npm run probe:audit:proof:history` | `All checks passed` (12) |
 | 4 DocuSign | `npm run probe:docusign:proof:pending` | `All checks passed` (15) |
 | | `npm run probe:docusign:proof:send` | `All checks passed` (13), 2 real emails |
-| | `npm run probe:docusign:proof:receive` | `All checks passed` (19), 1 real envelope sent + voided |
+| | `npm run probe:docusign:proof:receive` | `All checks passed` (24), 1 real envelope sent + voided |
 | | `npm run probe:docusign:proof:failures` | `All checks passed` (17), ~2 min |
 | 3 Spam | `npm run probe:spam:flood` | `SKIP` (limits stop it now; stage 1 output already in `evidence/`) |
 | | `npm run probe:spam:proof:limits` | `All checks passed` (15) |
@@ -81,8 +81,8 @@ npm run test:clean && npm run probe:audit:seed && npm run probe:spam:seed && npm
 | | `npm run probe:reminders:proof:optout` | `All checks passed` (15), ~3 min |
 | | `npm run probe:reminders:compare` | table + `All checks passed` (6), ~4 min |
 | Security | `npm run probe:security:advisors` | advisor + linter lists (reviewed in FRICTION_LOG) |
-| | `npm run probe:security:scan` | `All checks passed` (107) |
-| | `npm run probe:security:sqli` | `All checks passed` (19) |
+| | `npm run probe:security:scan` | `All checks passed` (115) |
+| | `npm run probe:security:sqli` | `All checks passed` (24) |
 | Build | `npm run build` | `✓ built` |
 
 **If a script fails:** run it once more on its own. Timing-dependent ones (reminders, Edge Functions after a reload) can hit a local hiccup; a second failure is real. See *Troubleshooting* at the end of TESTING.md.

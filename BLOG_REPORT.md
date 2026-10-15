@@ -148,15 +148,17 @@ A reminder email to every guest 24 h before their session (200 test bookings, lo
 
 Skipped because it would mostly show where Supabase is **enough**: Postgres ships the full time-zone database and handles daylight-saving changes correctly. The one real Supabase limitation found: **scheduled jobs run in UTC only** (verified locally: pg_cron 1.6.4, `cron.timezone = GMT`, set at server start, not changeable by the project's database user; hosted: *to verify before publishing*), so "every day at 06:00 Berlin" shifts by an hour twice a year. Two small bugs in the project's own code were noted, not fixed (recurring bookings drift by an hour across a clock change; emails show UTC times).
 
-### Security review (after all features)  ·  ~3 h
+### Security review (after all features)  ·  ~3 h 30 min
 
 Requested by reviewers: Supabase's own checks, a scan of everything reachable, SQL injection.
 
 | Step | Result |
 |---|---|
 | 1. Security Advisor + linter (`supabase db advisors`, `db lint`) | No errors; 11 advisor items + 1 linter warning, each reviewed: 1 real (the open `booking_series` insert, see step 2), the rest intended (RLS on with no policy = closed to the API; a deliberately forgeable probe table) or cosmetic (pg_net's extension record in `public`, its objects all in `net`). |
-| 2. Exposure scan (107 checks) | Every table × {public key, a stranger's login} × {read, insert, update, delete}, judged in the database; every function via `rpc()`; all 10 Edge Functions; Storage; GraphQL; compared with an expected-access map (unknown objects fail as "not reviewed"). **No cross-host reads/writes, internal functions and Edge Functions closed.** But **2 real issues**: unlimited empty series (each a line in the host's history), and **a bypass of the spam limits: 40 bookings on one host where the limit is 10**, by attaching bookings to made-up series (weeks of a series skipped the limits and nothing tied them to the series). Fixed with a trigger (series counted at creation; bookings must match their series); all earlier proofs re-run and pass. |
-| 3. SQL injection (19 checks) | **supabase-js filters are parameterised** (SQL in a value is just text). Filter *strings* built from input (`.or(...)`) can be bent, but RLS still limits the rows. **The real risk is your own functions:** a `SECURITY DEFINER` function that builds SQL by concatenation, called via `rpc()` by a normal logged-in host, leaked **other hosts' bookings, every account's email (`auth.users`) and the Vault secrets**. The safe version (parameters + `format('%I')`) stopped every attack. The unsafe function is locked twice (no grant; a 2-minute switch) and the scan fails if it's callable. |
+| 2. Exposure scan (115 checks) | Every table × {public key, a stranger's login} × {read, insert, update, delete}, judged in the database; every function via `rpc()`; all 10 Edge Functions; Storage; GraphQL; compared with an expected-access map (unknown objects fail as "not reviewed"). **No cross-host reads/writes, internal functions and Edge Functions closed.** But **2 real issues**: unlimited empty series (each a line in the host's history), and **a bypass of the spam limits: 40 bookings on one host where the limit is 10**, by attaching bookings to made-up series (weeks of a series skipped the limits and nothing tied them to the series). Fixed with a trigger (series counted at creation; bookings must match their series); all earlier proofs re-run and pass. |
+| 3. SQL injection (24 checks) | **supabase-js filters are parameterised** (SQL in a value is just text). Filter *strings* built from input (`.or(...)`) can be bent, but RLS still limits the rows. **The real risk is your own functions.** The same string-built search function, called via `rpc()` by a normal logged-in host, in two variants: **`SECURITY DEFINER`** (runs as the owner `postgres`, RLS off) leaked **other hosts' bookings, every account's email (`auth.users`) and the Vault secrets**; **`SECURITY INVOKER`** (runs as the caller) was still injectable, but **RLS kept it to the attacker's own 2 bookings** and `auth.users` / Vault were refused; it could still make the **database send HTTP requests via pg_net** (Supabase's default grants let `anon`/`authenticated` execute `net.http_get`/`http_post`). The safe version (parameters + `format('%I')`) stopped every attack. Both unsafe functions are locked twice (no grant; a 2-minute switch) and the scan fails if they're callable. |
+
+**SQL injection, precisely:** injection + `SECURITY DEFINER` = the attacker gets the function owner's rights (here everything, incl. `auth.users` and Vault); injection + `SECURITY INVOKER` = no more than the caller's own role (RLS and grants still apply), which is what the API already allows **plus** role rights the API doesn't expose (pg_net). INVOKER limits the damage; only parameters fix the bug.
 
 **Findings:** Supabase's protections held where they were configured; both real holes came from **what the database exposes by design**: every insertable column combination, and every function in `public`, is public API. **Supabase's Security Advisor missed both**: it checks configuration (RLS on, policies too wide), not behaviour. In a backend, only the endpoints you write are reachable, so a hand-built `series_id` or a stray helper function wouldn't be.
 
@@ -168,7 +170,7 @@ Requested by reviewers: Supabase's own checks, a scan of everything reachable, S
 2. **Infrastructure you'd normally get from a library had to be built.** Job-runner behaviour (retries, backoff, dead letters, rate limiting, single-worker leases, stuck detection) was hand-built on pg_cron + pg_net + pgmq + triggers, twice (DocuSign and reminders).
 3. **Logic is scattered across runtimes.** Browser JS, PL/pgSQL (functions, triggers, RLS), Deno Edge Functions, cron definitions and Vault entries. When something fails, the evidence is in different places (`net._http_response`, function logs, `docker logs`, a status column).
 4. **Silent failures and surprising defaults.** RLS returns success for blocked updates; Realtime drops events; pg_net times out after 5 s by default; supa_audit broke sign-up; pgmq counts reads as attempts; a 504 didn't stop a function.
-5. **The database is directly exposed to every browser.** Every table and function must be locked down individually (grants + RLS + revokes); forgetting one is a data leak or an abuse vector. The security review proved it: a column combination no screen uses bypassed the spam limits (40 bookings vs. a limit of 10), and one string-built function exposed `auth.users` and Vault through `rpc()`; Supabase's Security Advisor flagged neither. A traditional backend exposes only the endpoints you write.
+5. **The database is directly exposed to every browser.** Every table and function must be locked down individually (grants + RLS + revokes); forgetting one is a data leak or an abuse vector. The security review proved it: a column combination no screen uses bypassed the spam limits (40 bookings vs. a limit of 10), and one string-built `SECURITY DEFINER` function exposed `auth.users` and Vault through `rpc()` (as `SECURITY INVOKER` the same bug stayed within RLS, but could still send HTTP requests via pg_net); Supabase's Security Advisor flagged neither. A traditional backend exposes only the endpoints you write.
 6. **Anonymous users are second-class.** No identity for RLS, rate limits or time zones; worked around with tokens, IP hashes and browser-supplied values.
 7. **Edge Function limits are real** (caller timeout, gateway timeout, CPU/wall-clock termination) and change how background work must be designed.
 8. **Local development friction:** webhooks can't reach localhost; Edge Functions need a separate `functions serve` process (once lost its container); config spread over several files and Vault; a time-limit test left a function running in the background.
@@ -189,11 +191,14 @@ These are **estimates of AI-assisted build time**: everything was built with **C
 | 4 DocuSign integration | ~4 h 45 min |
 | 5 Bulk reminders | ~4 h 25 min |
 | 6 Time zones (analysis only) | ~30 min |
-| Security review (advisors, exposure scan + fix, SQL injection) | ~3 h |
+| Security review (advisors, exposure scan + fix, SQL injection incl. DEFINER/INVOKER contrast) | ~3 h 30 min |
+| Hosted checks prepared (not run) + NestJS comparison plan | ~2 h |
 
 ---
 
 ## 8. What a NestJS backend is expected to change (not yet measured)
+
+How it will be measured: `NESTJS_COMPARISON_PLAN.md` (the same scenarios run against both backends through a small adapter each, and the same AI-assisted effort method).
 
 **Likely better with a dedicated backend:**
 - Transactions spanning several steps in ordinary application code (no SQL functions or RLS re-application).
@@ -220,10 +225,10 @@ These are **estimates of AI-assisted build time**: everything was built with **C
 - **CAPTCHA** was tested only with Cloudflare's test keys (any token passes); real bot detection wasn't tested. The widget hasn't yet been checked in a browser.
 - **Webhooks** were tested with simulated, correctly signed DocuSign messages; real DocuSign Connect calls need a public URL.
 - **Emails** went only to Mailpit (no real provider); DocuSign emails were real (demo account).
-- **Security** testing: the core RLS checks (60), per-feature checks, Supabase's advisors, an exposure scan of every table, function, Edge Function and the avatars bucket as anon and as a stranger (107 checks), and SQL-injection tests (19). **Not covered:** Realtime subscriptions beyond the core design, Auth's own endpoints and rate limits, attacks needing a hosted project (header spoofing behind Supabase's real proxy, see the to-verify list), and dependency/supply-chain checks. The scan is only as good as its expected-access map, which was written by the same builder.
+- **Security** testing: the core RLS checks (60), per-feature checks, Supabase's advisors, an exposure scan of every table, function, Edge Function and the avatars bucket as anon and as a stranger (115 checks), and SQL-injection tests (24, DEFINER vs. INVOKER). **Not covered:** Realtime subscriptions beyond the core design, Auth's own endpoints and rate limits, attacks needing a hosted project (header spoofing behind Supabase's real proxy, see the to-verify list), and dependency/supply-chain checks. The scan is only as good as its expected-access map, which was written by the same builder.
 - **Time figures** are estimates of AI-assisted build time (Claude Code), not measured and not hand-coding time; only relative effort is meaningful.
 - **Timings** come from a few local runs on one laptop (Docker). Only large, repeatable differences are quoted, as ranges with the number of runs; small differences (e.g. the advisory-lock cost) are labelled noise.
-- **To verify before publishing** (checked locally only, or not checked):
+- **To verify before publishing** (checked locally only, or not checked). Scripts for all of these are ready in `HOSTED_CHECKS.md` (`npm run hosted:*` on a free hosted project, with the deliberately unsafe probe objects dropped or closed first); **not run yet**:
   - the role behind `SUPABASE_DB_URL` on hosted Supabase (locally `postgres`: owner + `BYPASSRLS`, not superuser);
   - `cron.timezone` on hosted projects (locally GMT, server-level);
   - exactly which Auth requests Supabase's built-in CAPTCHA covers;
@@ -231,7 +236,9 @@ These are **estimates of AI-assisted build time**: everything was built with **C
   - Edge Function limits on hosted (caller timeout, gateway 504 after 150 s, CPU/wall-clock termination, 546);
   - which IP headers hosted Edge Functions/PostgREST receive, and whether a client can spoof `X-Forwarded-For`;
   - pg_net timeouts against hosted Edge Function cold starts;
-  - the built-in Edge Function JWT check letting the public key through.
+  - the built-in Edge Function JWT check letting the public key through (re-confirmed locally with a function that keeps the check on: 200 for the publishable key alone);
+  - whether `anon` / `authenticated` may execute pg_net's `net.http_get` / `http_post` on hosted (locally yes; this is what lets an injected `SECURITY INVOKER` function send HTTP requests);
+  - GraphQL (`pg_graphql`, not installed locally, usually on in hosted projects): the exposure scan checks it shows no more than REST.
 - Supabase's "native" CAPTCHA route (anonymous sign-in) and feature 6 were reasoned about, not built.
 
 ---
@@ -241,6 +248,7 @@ These are **estimates of AI-assisted build time**: everything was built with **C
 - `FRICTION_LOG.md`: every friction point with what happened, workaround, time and "backend needed?"; a stage-comparison table and a "for the blog" paragraph per feature.
 - `evidence/`: saved outputs of all 21 proof scripts (PASS/FAIL lines, comparison tables), including the "before the fix" runs (DocuSign stage 4: 11 failures; spam stage 2: the race letting 14 of 10 through; security scan: the limit bypass, 40 of 10).
 - `BLOG_EVIDENCE.md`: checklist of ~90 screenshots to take (not taken yet).
+- `HOSTED_CHECKS.md` + `src/probes/hosted/`: the prepared hosted re-runs (not run yet). `NESTJS_COMPARISON_PLAN.md`: the plan for the fair comparison.
 - Git history: one commit per stage (21 commits), so every state can be reproduced.
 
 ---

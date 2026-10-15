@@ -51,3 +51,6 @@ supabase/.branches/
 
 # Saved proof outputs for the blog (npm run evidence); kept locally, not committed
 evidence/
+
+# Hosted Supabase project for HOSTED_CHECKS.md (URL, keys, database password): never commit
+.env.hosted

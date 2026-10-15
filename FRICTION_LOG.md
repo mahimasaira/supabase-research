@@ -528,7 +528,7 @@ Planned stages: 1. show the problem (flood script), 2. limits in the database (a
 | Proof | 4 problems reproduced | 15 checks (14 of max 10 before the lock fix) | 15 checks | 8 checks |
 | Time | ~35 min | ~60 min | ~75 min | ~25 min |
 
-**For the blog:** RLS answers *who* may write, not *how often*, and anonymous guests are indistinguishable. Postgres can enforce limits for every path through the API (with care: atomicity, trusting the right IP header, privacy), but limits alone let an attacker lock out real guests. Telling humans from bots needs a CAPTCHA, which needs a secret and a server-side check (an Edge Function), and most of the work is closing every other way in. Supabase's built-in CAPTCHA only guards Auth, all of it at once, so it didn't fit anonymous guests. **Total feature time: ~3 h 15 min.**
+**For the blog:** RLS answers *who* may write, not *how often*, and anonymous guests are indistinguishable. Postgres can enforce limits for every path through the API (with care: atomicity, trusting the right IP header, privacy), but limits alone let an attacker lock out real guests. Telling humans from bots needs a CAPTCHA, which needs a secret and a server-side check (an Edge Function), and most of the work is closing every other way in. Supabase's built-in CAPTCHA is an Auth setting, not a guard for table writes, so it didn't fit anonymous guests (exactly which Auth requests it covers: to verify before publishing). **Total feature time: ~3 h 15 min.**
 
 ---
 
@@ -671,7 +671,7 @@ Requested in review: run Supabase's own checks, scan everything the public key a
 
 ## Step 2: exposure scan (everything the public key and a normal login can reach)
 
-`npm run probe:security:scan` (`exposure-scan.mjs`, 107 checks). Two fresh hosts: B owns the data, A is a stranger; plus a visitor with only the public key. Then:
+`npm run probe:security:scan` (`exposure-scan.mjs`, 115 checks). Two fresh hosts: B owns the data, A is a stranger; plus a visitor with only the public key. Then:
 - **Every table** in `public`: read, insert, update, delete on B's (or internal) rows, as anon and as A. Updates and deletes are judged **in the database** (did the row change?), because a blocked update through the API answers "success, 0 rows".
 - **Every function** in `public`, called through `rpc()` as anon and as A.
 - **Every Edge Function** (all 10 have Supabase's JWT check off, so each checks callers itself), Storage (avatars), the GraphQL endpoint.
@@ -690,26 +690,48 @@ Requested in review: run Supabase's own checks, scan everything the public key a
 
 ## Step 3: SQL injection
 
-`npm run probe:security:sqli` (`sqli-proof.mjs`, 19 checks).
+`npm run probe:security:sqli` (`sqli-proof.mjs`, 24 checks; the INVOKER contrast in migration `20261015101503_security_sqli_invoker.sql`).
 - **supabase-js filters are parameterised:** `.eq('guest_email', "x' or '1'='1")` returns 0 rows, and a guest literally named `' or '1'='1` is found exactly once. supabase-js builds URL parameters, PostgREST sends values to Postgres as bound parameters, so a quote is just a character.
 - **A related trap that isn't SQL:** gluing user input into a PostgREST filter *string* (`.or(\`guest_email.eq.${input}\`)`) lets input like `x,guest_email.neq.x` add its own condition. Proven: the "search" returned all of the attacker's bookings, but **RLS still kept it to their own rows**.
-- **Where injection really happens: your own Postgres functions.** `sqli_search_bookings_unsafe` (a host searches their bookings) builds the query by concatenation and runs it with `EXECUTE`; it's `SECURITY DEFINER`, as such helper functions often are. Through `rpc()`, a normal logged-in host sent:
+- **Where injection really happens: your own Postgres functions.** `sqli_search_bookings_unsafe` (a host searches their bookings) builds the query by concatenation and runs it with `EXECUTE`. **It is `SECURITY DEFINER`**: it runs as its owner, `postgres` (owns the tables, `BYPASSRLS`), as helper functions that need to read across tables often are. Through `rpc()`, a normal logged-in host sent:
   - `zzz%' or true --` → **every host's bookings** (214 rows of other hosts' guests in the local data);
   - `… union all select … from auth.users --` → **every account's email address**;
   - `… union all select … from vault.decrypted_secrets --` → **the project's Vault secrets** (the script counts them, doesn't print them).
+- **Contrast: the identical function as `SECURITY INVOKER`** (`sqli_search_bookings_unsafe_invoker`, runs as the caller, `authenticated`). The injection **still works** (the input still becomes SQL), but it can only do what the caller's role may do:
+  - `zzz%' or true --` → **2 rows: only the attacker's own bookings**; RLS filtered out every other host's;
+  - `… from auth.users --` → refused (`permission denied for table users`);
+  - `… from vault.decrypted_secrets --` → refused (`permission denied for schema vault`);
+  - **but** `… net.http_get('http://…') --` → **the database server sent an HTTP request** for the attacker (response 200 from a harmless local endpoint). The `net` schema isn't in the API, yet Supabase's default grants give `anon` and `authenticated` USAGE on it and EXECUTE on `net.http_get` / `http_post`, so any SQL running as those roles can make outbound requests (server-side request forgery: e.g. calling internal URLs the browser can't reach).
+  - **Precisely:** injection + DEFINER = the attacker gets the function owner's rights (here: the whole database, `auth.users`, Vault). Injection + INVOKER = the attacker gets **no more than their own role's rights**: RLS and grants still apply, so other users' rows stay hidden. That is the same set of rights the API already gives them, **plus** whatever the role may do that the API doesn't expose (here: pg_net). INVOKER limits the damage; it doesn't make the injection harmless.
 - **The safe version** (`sqli_search_bookings_safe`): values passed as parameters (`execute … using`), the sort column quoted with `format('%I')` (`%L` would be the choice for a value that can't be a parameter). The same inputs are searched for literally (0 rows); a sort column `starts_at; delete from public.bookings --` is just an unknown column (error, nothing runs).
-- **The unsafe function can't stay switched on by accident:** (1) no API role may execute it (revoked in the migration; the proof grants it only for its run and revokes it on exit, also on Ctrl+C or a crash); (2) even if granted, it refuses unless `sqli_probe_switch.unsafe_enabled_until` is in the future, and the proof sets that to +2 minutes; (3) the exposure scan fails if the API can call it.
-- **What this says about Supabase:** `rpc()` makes **every function in `public` with execute rights an API endpoint**, and `SECURITY DEFINER` turns off RLS inside it. One careless `EXECUTE` therefore exposes the whole database, including `auth.users` and Vault, to any logged-in user. Supabase's advisors didn't flag it (step 1). In a NestJS backend the same mistake (string-built SQL in a repository) is possible too, but the endpoint would sit behind a route and the database user wouldn't normally own `auth`/Vault-like secrets.
-- **Time spent:** ~45 min
+- **The unsafe functions (both versions) can't stay switched on by accident:** (1) no API role may execute them (revoked in the migrations; the proof grants them only for its run and revokes them on exit, also on Ctrl+C or a crash); (2) even if granted, they refuse unless `sqli_probe_switch.unsafe_enabled_until` is in the future, and the proof sets that to +2 minutes (the INVOKER version asks a small DEFINER helper, `sqli_probe_unsafe_enabled()`, since the caller can't read the switch table); (3) the exposure scan fails if the API can call them.
+- **What this says about Supabase:** `rpc()` makes **every function in `public` with execute rights an API endpoint**, and `SECURITY DEFINER` turns off RLS inside it. One careless `EXECUTE` in a DEFINER function therefore exposes the whole database, including `auth.users` and Vault, to any logged-in user; in an INVOKER function, RLS still holds, but the default pg_net grants turn it into an outbound-request tool. (Revoking `net` access from `anon`/`authenticated` would close that, if nothing in the app needs it; not changed here, recorded.) Supabase's advisors didn't flag it (step 1). In a NestJS backend the same mistake (string-built SQL in a repository) is possible too, but the endpoint would sit behind a route and the database user wouldn't normally own `auth`/Vault-like secrets.
+- **Time spent:** ~45 min + ~30 min (INVOKER contrast)
 
 ### Security review: summary
 
 | | Advisors + linter | Exposure scan | SQL injection |
 |---|---|---|---|
-| Built with | Supabase CLI (`db advisors`, `db lint`) | supabase-js + psql, expected-access map | 2 Postgres functions + proof script |
-| Found | 11 advisor + 1 linter items: 1 real (pointer to the series issue), rest intended/cosmetic | **2 real issues** (unlimited series; limit bypass 40/10), fixed | supabase-js safe; own functions are the risk; unsafe one leaked other hosts' guests, all user emails, Vault secrets |
+| Built with | Supabase CLI (`db advisors`, `db lint`) | supabase-js + psql, expected-access map | 3 Postgres functions (unsafe DEFINER, unsafe INVOKER, safe) + proof script |
+| Found | 11 advisor + 1 linter items: 1 real (pointer to the series issue), rest intended/cosmetic | **2 real issues** (unlimited series; limit bypass 40/10), fixed | supabase-js safe; own functions are the risk; unsafe + DEFINER leaked other hosts' guests, all user emails, Vault secrets; unsafe + INVOKER stayed within RLS but could still send HTTP requests via pg_net |
 | Missed by Supabase's tools | — | the limit bypass | the injectable function |
-| Proof | evidence file | 107 checks | 19 checks |
-| Time | ~30 min | ~1 h 45 min | ~45 min |
+| Proof | evidence file | 115 checks | 24 checks |
+| Time | ~30 min | ~1 h 45 min | ~1 h 15 min |
 
-**For the blog:** Supabase's built-in protections held up: no cross-host reads or writes, internal functions closed, supabase-js parameterised. But the two real holes were both in **what the database exposes by design**: insertable columns the app never uses together, and a function callable via `rpc()`. Supabase's Security Advisor checks configuration and missed both; a scan that tries every table, function and column combination as each role is what found them. **Total: ~3 h.**
+**For the blog:** Supabase's built-in protections held up: no cross-host reads or writes, internal functions closed, supabase-js parameterised. But the two real holes were both in **what the database exposes by design**: insertable columns the app never uses together, and a function callable via `rpc()`. Supabase's Security Advisor checks configuration and missed both; a scan that tries every table, function and column combination as each role is what found them. SQL injection in one sentence: **injection + `SECURITY DEFINER` exposes everything the owner can reach; injection + `SECURITY INVOKER` is still limited by RLS and grants, but those grants include more than the API shows (pg_net).** **Total: ~3 h 30 min.**
+
+---
+
+# Hosted checks (prepared, not run yet)
+
+The *to verify before publishing* items depend on Supabase's cloud setup, so they need a hosted project. Prepared: `HOSTED_CHECKS.md` (setup, order, how to record results), `src/probes/hosted/` (7 scripts), two Edge Functions (`hosted-probe`, token-locked: sleeps with heartbeats, echoes IP headers, reports its database role; `hosted-jwt-check`, built-in JWT check **on**), migration `20261015110057_hosted_probe.sql` (heartbeat table, closed to the API).
+
+- **Probe-only objects on a hosted project:** `db push` applies every migration (the schema must match, and later migrations depend on earlier ones), so nothing is skipped; instead `hosted:lockdown` **drops** both injectable functions, **closes** `audit_log_client` and unschedules the DocuSign/reminder jobs, and only the two check functions are deployed. Every hosted script re-checks this in the database first and refuses to run otherwise; `hosted:preflight` also checks it through the public API.
+- **Caught while dry-running the lockdown locally (inside a rolled-back transaction):** my first "is `audit_log_client` writable?" check used `has_table_privilege`, which said `false` even locally, where it is writable: the insert right is a **column-level** grant, which `has_table_privilege` doesn't see. `has_any_column_privilege` does. Easy to get wrong when auditing grants by hand.
+- **Already visible locally:** `hosted-jwt-check` keeps Supabase's JWT check on, yet answered **200 to the publishable key alone**, confirming that check doesn't identify the caller (local CLI 2.120).
+- **Not verified end to end:** the hosted scripts' SQL and pg_net calls were tried locally; the scripts themselves need the hosted project to run.
+- **Time spent:** ~1 h 30 min
+
+# NestJS comparison plan (plan only)
+
+`NESTJS_COMPARISON_PLAN.md`: a scenario runner in `scenarios/` with one adapter per backend (front door = the `src/services/` function names; back door = seeding, database truth, fault injection), ported and proven against Supabase first; a table of which of today's scripts become shared scenarios (most) and which stay Supabase-only (audit stage 1, supa_audit/pgaudit, advisors, DEFINER/INVOKER, hosted limits); and the same effort method (Claude Code, same briefs, same stages, objective numbers per stage, platform work kept separate, the "built second" bias stated). **Time spent:** ~30 min

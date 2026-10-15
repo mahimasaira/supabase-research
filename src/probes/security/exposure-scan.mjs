@@ -1,5 +1,6 @@
 // Exposure scan: what can the public key (anon) and a normal logged-in user (a stranger host)
-// do to data that isn't theirs? Local only. Run: npm run probe:security:scan
+// do to data that isn't theirs? Run: npm run probe:security:scan (local)
+// or npm run hosted:scan (the hosted project, after hosted:lockdown; see HOSTED_CHECKS.md).
 //
 // For EVERY table in the public schema: try read / insert / update / delete, as anon and as
 // a stranger, against another host's row (or an internal row). Updates and deletes are checked
@@ -9,13 +10,20 @@
 // Each result is compared with what SHOULD be allowed (EXPECT below). A table or function the
 // scan doesn't know yet fails as "not reviewed", so new ones can't slip through unnoticed.
 import { createClient } from '@supabase/supabase-js'
-import { execSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
 
-const DB = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+const DB = process.env.SCAN_DB_URL || 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+// On the hosted project the probe-only objects are closed (src/probes/hosted/sql/lockdown.sql).
+const LOCKED = process.env.PROBES_LOCKED === '1'
 const URL = process.env.VITE_SUPABASE_URL
 const KEY = process.env.VITE_SUPABASE_ANON_KEY
-const psql = (q) => execSync(`psql ${DB} -At -F'|' -c "${q.replace(/"/g, '\\"')}"`).toString().trim()
+// The connection string may hold a password (hosted): passed as an argument, never printed.
+function psql(q) {
+  const r = spawnSync('psql', [DB, '-At', '-F|', '-c', q], { encoding: 'utf8' })
+  if (r.status !== 0) throw new Error(`psql failed: ${(r.stderr || '').trim()}`)
+  return r.stdout.trim()
+}
 const client = () => createClient(URL, KEY, { auth: { persistSession: false } })
 const at = (h) => new Date(Date.now() + h * 3600_000).toISOString()
 const run = Date.now()
@@ -44,6 +52,7 @@ process.on('exit', () => {
   psql(`delete from reminder_optouts where email_hash like 'scan-%'`)
   psql(`delete from test_mail_provider_log where id < 0`)
   psql(`delete from booking_series where guest_email like 'scan-%'`)
+  psql(`delete from hosted_probe_heartbeats where run_id = 'scan-${run}'`)
 })
 
 const slot = async (h) => (await B.c.from('slots').insert({ host_id: B.id, starts_at: at(h), ends_at: at(h + 1) }).select().single()).data.id
@@ -61,6 +70,7 @@ psql(`insert into booking_rate_events (host_id, ip_hash) values ('${B.id}', 'sca
 const rateEventB = psql(`select id from booking_rate_events where host_id = '${B.id}' limit 1`)
 psql(`insert into reminder_optouts (email_hash) values ('scan-${run}')`)
 psql(`insert into test_mail_provider_log (id, accepted) overriding system value values (-${run % 1e9}, true)`)
+const heartbeat = psql(`insert into hosted_probe_heartbeats (run_id, second, note) values ('scan-${run}', 0, 'start') returning id`).split('\n')[0]
 
 // ---------------------------------------------------------------------------
 // What SHOULD be possible. Letters: R read, I insert, U update, D delete (on B's / internal rows).
@@ -78,7 +88,8 @@ const T = {
     patch: { guest_email: 'attacker@example.com' } },
   audit_log: { key: 'id', row: auditB, expect: { anon: '', stranger: '' },
     insert: () => ({ actor_role: 'authenticated', action: 'delete', table_name: 'bookings', record_id: bookingB, host_id: B.id }), patch: { action: 'forged' } },
-  audit_log_client: { key: 'id', row: clientAuditB, expect: { anon: 'I', stranger: 'I' }, note: 'PROBE table (audit stage 1): deliberately forgeable; drop before any real deployment',
+  audit_log_client: { key: 'id', row: clientAuditB, expect: LOCKED ? { anon: '', stranger: '' } : { anon: 'I', stranger: 'I' },
+    note: 'PROBE table (audit stage 1): deliberately forgeable locally; closed on the hosted project',
     insert: () => ({ action: 'booking.created', table_name: 'bookings', host_id: B.id, changes: { scan: String(run) } }), patch: { action: 'booking.forged' } },
   booking_rate_events: { key: 'id', row: rateEventB, expect: { anon: '', stranger: '' },
     insert: () => ({ host_id: B.id, ip_hash: 'scan' }), patch: { ip_hash: 'reset' } },
@@ -94,6 +105,8 @@ const T = {
     insert: () => ({ id: 99 }), patch: { unsafe_enabled_until: at(24) } },
   test_mail_provider_settings: { key: 'id', row: 1, expect: { anon: '', stranger: '' }, note: 'PROBE table (test double)',
     insert: () => ({ id: 99 }), patch: { limit_per_second: 0 } },
+  hosted_probe_heartbeats: { key: 'id', row: heartbeat, expect: { anon: '', stranger: '' },
+    insert: () => ({ run_id: 'scan', second: 0, note: 'forged' }), patch: { note: 'forged' } },
 }
 
 // Functions callable through the API on purpose (each checks its own input, e.g. a secret token).
@@ -103,6 +116,7 @@ const CALLABLE = {
   get_booking_statuses: 'needs the guests\' cancel tokens',
   unsubscribe_reminders: 'needs the guest\'s cancel token',
   sqli_search_bookings_safe: 'SQL-injection probe, safe version (parameters / format %I); logged-in users only',
+  sqli_probe_unsafe_enabled: 'only says whether the SQL-injection probe is on; logged-in users only',
 }
 // Known functions that must NOT be callable from the API (internal, triggers, cron, probes).
 const INTERNAL = new Set([
@@ -112,7 +126,7 @@ const INTERNAL = new Set([
   'enqueue_reminders', 'handle_new_user', 'invoke_edge_function', 'process_reminders', 'reminder_email_hash',
   'reminders_opted_out', 'request_client_ip', 'run_reminders', 'set_cancelled_at', 'sync_slot_is_booked',
   'booking_series_enforce_limits', 'bookings_check_series', 'enforce_booking_limits',
-  'sqli_search_bookings_unsafe',
+  'sqli_search_bookings_unsafe', 'sqli_search_bookings_unsafe_invoker',
 ])
 
 // ---------------------------------------------------------------------------
@@ -155,7 +169,7 @@ for (const line of fns) {
   for (const [who, c] of [['anon', anon], ['stranger', A.c]]) {
     const r = await c.rpc(name, args)
     const denied = ['42501', 'PGRST202', 'PGRST203'].includes(r.error?.code) || [401, 403, 404].includes(r.status)
-    const should = name in CALLABLE && !(name === 'sqli_search_bookings_safe' && who === 'anon')
+    const should = name in CALLABLE && !(name.startsWith('sqli_') && who === 'anon')
     check(`${(name + '()').padEnd(38)} ${who.padEnd(8)} ${denied ? 'blocked' : 'callable'}${should ? `   (${CALLABLE[name]})` : ''}`,
       denied === !should, `status ${r.status} ${r.error?.code ?? ''} ${r.error?.message ?? ''}`)
   }
@@ -173,17 +187,20 @@ const EDGE = {
   'book-slot': 'public', 'book-recurring': 'public', 'reminders-unsubscribe': 'public',
   'docusign-webhook': 'signed', 'docusign-sync': 'host',
   'docusign-send': 'secret', 'docusign-void': 'secret', 'send-reminders': 'secret', 'process-reminders': 'secret', 'test-mail-provider': 'secret',
+  'hosted-probe': 'secret',      // needs its own probe token
+  'hosted-jwt-check': 'public',  // returns only { reached: true }
 }
 const stranger = (await A.c.auth.getSession()).data.session.access_token
 const call = (fn, bearer, body = {}) => fetch(`${URL}/functions/v1/${fn}`, {
   method: 'POST', headers: { apikey: KEY, Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 }).then((x) => x.status).catch(() => 0)
-const up = await call('book-slot', KEY)
+const up = await call('hosted-probe', KEY)
 if (up === 0 || up === 503) console.log(`SKIP  Edge Functions not reachable (status ${up}): start npm run functions:serve and run again`)
 else {
   for (const fn of readdirSync('supabase/functions').filter((d) => !d.startsWith('_') && !d.startsWith('.'))) {
     const kind = EDGE[fn]
     if (!kind) { check(`${fn}: not reviewed by this scan`, false); continue }
+    if ((await call(fn, KEY)) === 404) { console.log(`SKIP  ${fn}: not deployed here`); continue }
     if (kind === 'public') {
       const s = await call(fn, KEY, { token: crypto.randomUUID() })
       check(`${fn.padEnd(24)} public key: ${s}  (public on purpose, checks its own input; must not be 5xx)`, s < 500)
@@ -217,8 +234,13 @@ check('stranger / anon cannot delete another host\'s avatar', objects() === '1')
 console.log('\n# 5. GraphQL endpoint')
 const gql = await fetch(`${URL}/graphql/v1`, { method: 'POST', headers: { apikey: KEY, 'Content-Type': 'application/json' },
   body: JSON.stringify({ query: '{ __schema { queryType { fields { name } } } }' }) }).then((x) => x.json()).catch((e) => ({ error: String(e) }))
+// pg_graphql (not installed locally, usually on in hosted projects) applies the same grants and RLS:
+// the public key may only see the tables anon can read (profiles, slots) and callable functions.
 const gqlFields = gql?.data?.__schema?.queryType?.fields?.map((f) => f.name) ?? []
-check(`GraphQL exposes no tables (pg_graphql not installed): ${gqlFields.length} fields`, gqlFields.filter((f) => f !== 'node').length === 0, JSON.stringify(gql).slice(0, 200))
+const camel = (n) => n.replace(/_(.)/g, (_, c) => c.toUpperCase())
+const gqlAllowed = new Set(['node', 'profilesCollection', 'slotsCollection', ...Object.keys(CALLABLE).map(camel)])
+const gqlExtra = gqlFields.filter((f) => !gqlAllowed.has(f))
+check(`GraphQL shows the public key only what REST does: ${gqlFields.length ? gqlFields.join(', ') : 'nothing (pg_graphql not installed)'}`, gqlExtra.length === 0, `unexpected: ${gqlExtra.join(', ')}`)
 
 // ---------------------------------------------------------------------------
 console.log('\n# 6. Abuse: what an open insert allows in bulk')

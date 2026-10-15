@@ -41,6 +41,13 @@
     "probe:security:advisors": "supabase db advisors --local --type all --level info && supabase db lint --local --level warning",
     "probe:security:scan": "node --env-file=.env.local src/probes/security/exposure-scan.mjs",
     "probe:security:sqli": "node --env-file=.env.local src/probes/security/sqli-proof.mjs",
+    "hosted:lockdown": "node --env-file=.env.hosted src/probes/hosted/lockdown.mjs",
+    "hosted:preflight": "node --env-file=.env.hosted src/probes/hosted/preflight.mjs",
+    "hosted:facts": "node --env-file=.env.hosted src/probes/hosted/facts.mjs",
+    "hosted:scan": "node --env-file=.env.hosted src/probes/hosted/scan.mjs",
+    "hosted:ip": "node --env-file=.env.hosted src/probes/hosted/ip-spoof.mjs",
+    "hosted:pgnet": "node --env-file=.env.hosted src/probes/hosted/pgnet.mjs",
+    "hosted:timeout": "node --env-file=.env.hosted src/probes/hosted/timeout.mjs",
     "test:clean": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \"delete from auth.users where email like '%@test.dev'\""
   },
   "dependencies": {

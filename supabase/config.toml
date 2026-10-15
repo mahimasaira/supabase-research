@@ -523,3 +523,17 @@ entrypoint = "./functions/test-mail-provider/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/test-mail-provider/*.html" ]
+
+# Hosted checks (HOSTED_CHECKS.md). hosted-probe checks its own token (x-probe-token);
+# hosted-jwt-check keeps Supabase's built-in JWT check ON on purpose.
+[functions.hosted-probe]
+enabled = true
+verify_jwt = false
+import_map = "./functions/hosted-probe/deno.json"
+entrypoint = "./functions/hosted-probe/index.ts"
+
+[functions.hosted-jwt-check]
+enabled = true
+verify_jwt = true
+import_map = "./functions/hosted-jwt-check/deno.json"
+entrypoint = "./functions/hosted-jwt-check/index.ts"

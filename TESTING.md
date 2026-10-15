@@ -136,7 +136,7 @@ pgaudit is only on while the compare script runs. To look at it yourself: `docke
 | `node --env-file=.env.local scripts/docusign-check.mjs` | 4 PASS lines + account name (DocuSign setup works) |
 | `npm run probe:docusign:proof:pending` | `All checks passed` (15); switches sending off while it runs |
 | `npm run probe:docusign:proof:send` | `All checks passed` (13); section B sends real emails to `DOCUSIGN_TEST_SIGNER_EMAIL` |
-| `npm run probe:docusign:proof:receive` | `All checks passed` (19); section B sends + voids one real envelope |
+| `npm run probe:docusign:proof:receive` | `All checks passed` (24); section B sends + voids one real envelope |
 | `npm run probe:docusign:proof:failures` | `All checks passed` (17); ~2 min; section 5 sends + voids one real envelope |
 | `npm run probe:spam:flood` | `SKIP` since stage 2 (limits stop it); stage 1 output in `evidence/` |
 | `npm run probe:spam:proof:limits` | `All checks passed` (15) |
@@ -184,7 +184,7 @@ npm run probe:docusign:setup     # writes supabase/functions/.env + Vault secret
 
 | Do | Expect |
 |---|---|
-| `npm run probe:docusign:proof:receive` | `All checks passed` (19). Section B sends + voids **1 real envelope** to `DOCUSIGN_TEST_SIGNER_EMAIL` (2 emails) |
+| `npm run probe:docusign:proof:receive` | `All checks passed` (24). Section B sends + voids **1 real envelope** to `DOCUSIGN_TEST_SIGNER_EMAIL` (2 emails) |
 | **Sign for real:** host opted in, guest books with **your** email, open the email, **Review Document → Sign → Finish** | DocuSign "completed" email |
 | Then as host: Dashboard → **Check signature status** | "Checked 1: 1 signed …"; the slot shows "Booked by …" (green); guest page shows "Booked" instead of "Held for you" |
 | History | "DocuSign · <guest> signed the agreement: booking on … confirmed" |
@@ -300,11 +300,19 @@ Both jobs (`enqueue-reminders` hourly, `process-reminders` every minute) exist b
 | Do | Expect |
 |---|---|
 | `npm run probe:security:advisors` | advisor JSON (12 items: `rls_enabled_no_policy` ×7, 2× `rls_policy_always_true`, `extension_in_public`, 2 performance) + linter warnings; all reviewed in FRICTION_LOG |
-| `npm run probe:security:scan` (needs `functions:serve` for section 3, otherwise SKIP) | `All checks passed` (107): every table × anon/stranger matches the expected access, internal functions blocked, internal Edge Functions 401, storage folders private, series abuse limited (≤ quota, 0 of 40) |
-| `npm run probe:security:sqli` | `All checks passed` (19): supabase-js filters treat SQL as text; the unsafe function leaks other hosts' bookings, account emails and Vault secrets; the safe one doesn't; afterwards the unsafe one is locked |
-| Studio: `select has_function_privilege('authenticated', 'public.sqli_search_bookings_unsafe(text)', 'execute'), unsafe_enabled_until from sqli_probe_switch` | `f` and null (locked) |
+| `npm run probe:security:scan` (needs `functions:serve` for section 3, otherwise SKIP) | `All checks passed` (115): every table × anon/stranger matches the expected access, internal functions blocked, internal Edge Functions 401, storage folders private, series abuse limited (≤ quota, 0 of 40) |
+| `npm run probe:security:sqli` | `All checks passed` (24): supabase-js filters treat SQL as text; the unsafe DEFINER function leaks other hosts' bookings, account emails and Vault secrets; the same function as INVOKER stays within RLS (own 2 bookings; auth.users/Vault refused) but still sends an HTTP request via pg_net; the safe one stops everything; afterwards both unsafe ones are locked |
+| Studio: `select has_function_privilege('authenticated', 'public.sqli_search_bookings_unsafe(text)', 'execute'), has_function_privilege('authenticated', 'public.sqli_search_bookings_unsafe_invoker(text)', 'execute'), unsafe_enabled_until from sqli_probe_switch` | `f`, `f` and null (locked) |
 
 The scan fails with "not reviewed" when a new table, function or Edge Function appears: add it to the expectations in `src/probes/security/exposure-scan.mjs` after deciding who may use it.
+
+## Hosted checks (needs a free hosted project; see HOSTED_CHECKS.md)
+
+| Do | Expect |
+|---|---|
+| `npm run hosted:preflight` (after `db push`, `hosted:lockdown`, deploying the two `hosted-*` functions) | `All preflight checks passed`: unsafe SQL-injection functions 404, `audit_log_client` refused, app functions not deployed, `hosted-probe` 401 without its token |
+| `npm run hosted:facts` · `hosted:scan` · `hosted:ip` · `hosted:timeout` · `hosted:pgnet` | NOTE lines to record (hosted values next to the local ones); the scan: `All checks passed` |
+| Any `hosted:*` script without `.env.hosted`, or pointed at 127.0.0.1 | refuses to start (exit 2); with probe objects open again: refuses (exit 3) |
 
 ## Troubleshooting
 
