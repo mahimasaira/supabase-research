@@ -325,6 +325,14 @@ The scan fails with "not reviewed" when a new table, function or Edge Function a
 | `npm run backend:dev`, then `curl http://127.0.0.1:3000/health` | `{"status":"ok","database":"ok","postgres":"17.…"}` |
 | `npm run backend:db:stop`, then `curl` again | the API keeps running but `/health` fails (500): the check really reaches the database |
 
+### N1: shared scenario runner
+
+| Do | Expect |
+|---|---|
+| `npm run scenarios:supabase` | `60/60 passed (backend: supabase)`: the same checks as `npm run test:rls`, same names and order |
+| `npm run scenarios -- --backend nestjs` | "Backend "nestjs" not available: … built in stage N2" (exit 2) |
+| Optional mutation test: in Studio `grant select on public.bookings to anon; create policy t on public.bookings for select to anon using (true);`, run both tests, then `drop policy t on public.bookings; revoke select on public.bookings from anon;` | both: 55/60, the same 5 FAILs; afterwards 60/60 again |
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |

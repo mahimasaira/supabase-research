@@ -54,6 +54,8 @@
     "backend:migrate": "npm --prefix backend exec -- prisma migrate dev",
     "backend:dev": "npm --prefix backend run start:dev",
     "backend:build": "npm --prefix backend run build",
+    "scenarios": "node --env-file=.env.local scenarios/run.mjs",
+    "scenarios:supabase": "node --env-file=.env.local scenarios/run.mjs --backend supabase",
     "test:clean": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \"delete from auth.users where email like '%@test.dev'\""
   },
   "dependencies": {

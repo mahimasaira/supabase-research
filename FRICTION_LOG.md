@@ -757,3 +757,14 @@ NestJS app from the official CLI (`@nestjs/cli` 12.0.8 generated a NestJS **11**
 - **Files:** `backend/` (~290 lines of our own code and config, plus the CLI template and `package-lock.json`), root `package.json` (+6 scripts).
 - **Testing/debugging:** easy (one `curl`). The first `nest build` took several minutes; later builds are quick.
 - **Time spent:** ~55 min (platform, incl. ~10 min for the `.env` path fix)
+
+## N1: shared scenario runner (test infrastructure, both versions)
+
+`scenarios/`: a runner (`run.mjs`), one adapter per backend (`adapters/supabase.mjs` done, `adapters/nestjs.mjs` a placeholder until N2) and the first shared feature, `features/core-permissions.mjs`: the 60 checks of `scripts/test-rls.mjs`, same order, written against the adapter. `npm run scenarios -- --backend supabase|nestjs`, `npm run scenarios:supabase`; the adapter interface is documented in `scenarios/README.md`.
+
+- **Proof the port is faithful, not just passing:** both report 60/60 with identical check names in the same order, and with a deliberate hole opened (anonymous visitors allowed to read bookings, then closed again) **both fail the same 5 checks**. A first attempt at a hole (letting hosts change a guest's email) failed to break either test: the bookings RLS policy only accepts updates that end in `cancelled`, so a second layer still refused it. Good to know (defence in depth), and a reminder that a mutation test must remove the *only* layer.
+- **Where the shared version had to differ:** 2 checks test Supabase mechanics (insert + read back in one request, rolled back as a whole); the adapter declares that capability, so they run on Supabase and will show as **SKIP with a reason** on NestJS. Live updates (4) and avatars (11) are the same: the NestJS adapter declares them when N4 builds them. Skips are printed and never counted as passed. Two checks compare *shapes* instead of exact field names (status lookup and broadcast payload: "no guest data, 4 fields"), since NestJS will name fields its own way.
+- **Deviation from the plan:** the plan's step 1 ("make `src/services/` usable from Node") isn't needed yet. The scenarios must also send requests the app never sends (attacks), which the services layer doesn't offer, so the Supabase adapter uses supabase-js directly. `src/services/` gets its NestJS twin in N3.
+- **Files:** `scenarios/` (~410 lines incl. README), root `package.json` (+2 scripts), `scripts/evidence.mjs` (+1 entry).
+- **Testing/debugging:** easy; one run takes ~10 s. The hand-made mutation test is the useful part and should be repeated for each ported feature.
+- **Time spent:** ~45 min (shared: counts for neither version)

@@ -48,7 +48,7 @@ Estimated time: **setup 15 min · automated tests 25 min · manual tests ~2 h ·
 npm run evidence -- all
 ```
 
-- Runs all 21 proof scripts in order and **saves each output** to `evidence/` with today's date and commit.
+- Runs all 22 proof scripts (incl. the shared scenarios on Supabase) in order and **saves each output** to `evidence/` with today's date and commit.
 - Sends **about 8 real DocuSign emails** to `DOCUSIGN_TEST_SIGNER_EMAIL`. Use `npm run evidence -- all --no-email` to skip those sections.
 - Don't use the app while it runs (some scripts restart the API container or reset test data).
 

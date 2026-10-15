@@ -255,6 +255,12 @@ Not built; reasoning in FRICTION_LOG.md. Optional evidence for the "where Supaba
 - [ ] Optional: the files `prisma init` created (`.agents/skills`, `.claude/skills`, `.windsurf/skills`) before removal, e.g. from a fresh `npx prisma@7.10.0 init` in an empty folder
 - **Takeaway:** the database, API and dashboard that `supabase start` gives you are the first things to wire by hand (platform cost).
 
+### N1: shared scenario runner · commit: (not committed yet)
+- [ ] Proof: `evidence/*_scenarios-supabase.txt` (60/60 on Supabase)
+- [ ] Code: one check side by side, `scripts/test-rls.mjs` (supabase-js) vs. `scenarios/features/core-permissions.mjs` (adapter)
+- [ ] Optional: the mutation test output (both 55/60, same 5 FAILs)
+- **Takeaway:** the comparison is only fair if both backends face the same tests; the runner is proven on Supabase before NestJS exists.
+
 ---
 
 ## Final pass (after all features)
