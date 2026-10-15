@@ -1,0 +1,12 @@
+// The NestJS version's database schema. Models are added stage by stage (N2: core tables).
+// Migrations: npm run backend:migrate (from the repo root).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs" // NestJS compiles to CommonJS
+}
+
+datasource db {
+  provider = "postgresql"
+}

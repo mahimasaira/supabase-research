@@ -314,6 +314,17 @@ The scan fails with "not reviewed" when a new table, function or Edge Function a
 | `npm run hosted:facts` · `hosted:scan` · `hosted:ip` · `hosted:timeout` · `hosted:pgnet` | NOTE lines to record (hosted values next to the local ones); the scan: `All checks passed` |
 | Any `hosted:*` script without `.env.hosted`, or pointed at 127.0.0.1 | refuses to start (exit 2); with probe objects open again: refuses (exit 3) |
 
+## NestJS version
+
+### N0: scaffold
+
+| Do | Expect |
+|---|---|
+| `npm run backend:install` (once) | installs, ends with "Generated Prisma Client" |
+| `npm run backend:db:start` | container `booking_nestjs_db` Healthy (port 5433; the Supabase stack can run at the same time) |
+| `npm run backend:dev`, then `curl http://127.0.0.1:3000/health` | `{"status":"ok","database":"ok","postgres":"17.…"}` |
+| `npm run backend:db:stop`, then `curl` again | the API keeps running but `/health` fails (500): the check really reaches the database |
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |

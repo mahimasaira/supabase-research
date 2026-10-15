@@ -1,0 +1,20 @@
+# The NestJS version's own database (separate from the Supabase stack on 54322).
+# npm run backend:db:start / backend:db:stop from the repo root.
+services:
+  db:
+    image: postgres:17
+    container_name: booking_nestjs_db
+    environment:
+      POSTGRES_USER: booking
+      POSTGRES_PASSWORD: booking
+      POSTGRES_DB: booking
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - booking_nestjs_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking"]
+      interval: 2s
+      retries: 30
+volumes:
+  booking_nestjs_db:

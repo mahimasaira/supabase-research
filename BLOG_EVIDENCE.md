@@ -248,6 +248,15 @@ Not built; reasoning in FRICTION_LOG.md. Optional evidence for the "where Supaba
 
 ---
 
+## NestJS version
+
+### N0: scaffold · commit: (not committed yet)
+- [ ] Terminal: `curl http://127.0.0.1:3000/health` → `{"status":"ok","database":"ok",…}`
+- [ ] Optional: the files `prisma init` created (`.agents/skills`, `.claude/skills`, `.windsurf/skills`) before removal, e.g. from a fresh `npx prisma@7.10.0 init` in an empty folder
+- **Takeaway:** the database, API and dashboard that `supabase start` gives you are the first things to wire by hand (platform cost).
+
+---
+
 ## Final pass (after all features)
 
 - [ ] Commit everything, then `npm run evidence -- all` (sends a few real DocuSign emails) for clean, commit-labelled outputs

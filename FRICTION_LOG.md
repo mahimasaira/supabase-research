@@ -735,3 +735,24 @@ The *to verify before publishing* items depend on Supabase's cloud setup, so the
 # NestJS comparison plan (plan only)
 
 `NESTJS_COMPARISON_PLAN.md`: a scenario runner in `scenarios/` with one adapter per backend (front door = the `src/services/` function names; back door = seeding, database truth, fault injection), ported and proven against Supabase first; a table of which of today's scripts become shared scenarios (most) and which stay Supabase-only (audit stage 1, supa_audit/pgaudit, advisors, DEFINER/INVOKER, hosted limits); and the same effort method (Claude Code, same briefs, same stages, objective numbers per stage, platform work kept separate, the "built second" bias stated). **Time spent:** ~30 min
+
+---
+
+# NestJS version
+
+Branch `feature/msa-nestjs` (stacked on `feature/msa-supabase-advanced`). Plan: `NESTJS_COMPARISON_PLAN.md`. Decisions (2026-10-16): **Prisma** for database access, **JWT bearer tokens** for the NestJS's own login (same model as Supabase Auth), **shared test runner first** (N1) so the core is built against a ready target.
+
+**Measured the same way as the Supabase version:** AI-assisted build time with Claude Code (model: Claude Opus 5.5), the author directing, reviewing and testing; one commit per stage; same entry format. **Platform work** (things Supabase gave for free: database setup, login, hosting) is marked *platform* so the per-feature numbers stay comparable.
+
+## N0: scaffold (platform)
+
+NestJS app from the official CLI (`@nestjs/cli` 12.0.8 generated a NestJS **11** template), Postgres 17 in Docker on port 5433 (`backend/docker-compose.yml`), Prisma 7.10.0 with the node-postgres driver adapter, `GET /health` checks the database. Root scripts: `backend:install`, `backend:db:start|stop`, `backend:migrate`, `backend:dev`, `backend:build`.
+
+- **What Supabase gave for free here:** a running database, an API and a dashboard after `supabase start`. NestJS: choose and wire an ORM, a database container, config loading, a module for the database client, an endpoint. Small, but it's the first of several "platform" costs.
+- **Surprises:**
+  - **Prisma's `latest` npm tag pointed at a release candidate** (8.0.0-rc.23, published the day before). Installing "latest" would have pulled a pre-release; pinned **7.10.0** (August) instead.
+  - **`prisma init` installed AI-assistant instruction files** (`.agents/skills/…`, `.claude/skills`, `.windsurf/skills`, `skills-lock.json`, downloaded from Prisma's GitHub). Removed: they would change how Claude Code behaves inside `backend/`, and the Supabase version was built without vendor instructions, so keeping them would break the "same assistant setup" rule. It also named its config `prisma7.config.ts` and ignored the `--url` flag (placeholder URL in `.env`); renamed to the standard `prisma.config.ts`, URL set by hand.
+  - **Prisma 7 changes the setup:** the client is generated as TypeScript into `src/generated/prisma` (git-ignored, `postinstall` regenerates it), needs `moduleFormat = "cjs"` for NestJS's CommonJS build, and connects through a driver adapter (`@prisma/adapter-pg`). The config file next to `src/` was compiled too and moved the build output to `dist/src/` (`Cannot find module dist/main.js`); excluded in `tsconfig.build.json`.
+- **Files:** `backend/` (~290 lines of our own code and config, plus the CLI template and `package-lock.json`), root `package.json` (+6 scripts).
+- **Testing/debugging:** easy (one `curl`). The first `nest build` took several minutes; later builds are quick.
+- **Time spent:** ~45 min (platform)

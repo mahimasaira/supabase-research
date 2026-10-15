@@ -15,8 +15,8 @@ The same booking app is built twice, sharing one Vue frontend:
 | Branch | Stacked on | Contents |
 |---|---|---|
 | `main` | — | Supabase core: auth, slots, booking, RLS, realtime, storage. Tagged `baseline`. **Don't modify core behaviour.** |
-| `feature/msa-supabase-advanced` ("supabase-advanced") | `main` | Advanced features built with Supabase (current work). |
-| `nestjs-backend` (later) | supabase-advanced | The NestJS version of everything. |
+| `feature/msa-supabase-advanced` ("supabase-advanced") | `main` | Advanced features built with Supabase (done; testing and screenshots still to do). |
+| `feature/msa-nestjs` (current work) | supabase-advanced | The NestJS version of everything. |
 
 ## Advanced features (this branch, in order)
 
@@ -54,6 +54,13 @@ Decisions (agreed 2026-10-12):
 - **Readers:** a host reads entries about their own slots/bookings only (RLS). Nobody can edit or delete entries.
 - **Stages:** 1. log from the browser (show the problem), 2. database triggers, 3. compare with `supa_audit` (not in the local image; only `pgaudit`, which logs to server logs, is available), 4. host history page.
 - Folder `src/probes/audit/`, own migration per stage.
+
+### NestJS version status (branch `feature/msa-nestjs`)
+
+Plan: `NESTJS_COMPARISON_PLAN.md`. Decisions (2026-10-16): **Prisma 7.10.0** (pinned; npm `latest` was an RC), **JWT bearer tokens** (own login, email + password), **shared test runner first**. Stages: N0 scaffold (done), N1 `scenarios/` runner + Supabase adapter (port the 60 `test:rls` checks, must match 60/60), N2 core backend (auth, profiles, slots, bookings, cancel token) passing the same checks, N3 `src/services/nestjs/` + move the core pages onto `src/services/` (`VITE_BACKEND=nestjs`), N4 realtime (WebSockets) + avatars, N5+ features 1–5 with the same stages as on Supabase. Measure effort the same way (FRICTION_LOG "NestJS version"); mark platform work.
+- `backend/`: NestJS 11 app (CLI template), own Postgres 17 in Docker on **127.0.0.1:5433** (`backend/docker-compose.yml`, user/password/db `booking`), API on **127.0.0.1:3000**, `GET /health`. Prisma: `backend/prisma/schema.prisma`, `backend/prisma.config.ts`, client generated to `backend/src/generated/prisma` (git-ignored, `postinstall`), `moduleFormat = "cjs"`, driver adapter `@prisma/adapter-pg`. `backend/.env` (git-ignored) has `DATABASE_URL`.
+- Root scripts: `backend:install`, `backend:db:start|stop`, `backend:migrate`, `backend:dev`, `backend:build`.
+- Don't add vendor AI-assistant files (`prisma init` created `.agents/`, `.claude/skills`, `.windsurf/`; removed to keep the assistant setup the same as for the Supabase build).
 
 ## Rules for all work on this branch
 

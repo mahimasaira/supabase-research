@@ -48,6 +48,12 @@
     "hosted:ip": "node --env-file=.env.hosted src/probes/hosted/ip-spoof.mjs",
     "hosted:pgnet": "node --env-file=.env.hosted src/probes/hosted/pgnet.mjs",
     "hosted:timeout": "node --env-file=.env.hosted src/probes/hosted/timeout.mjs",
+    "backend:install": "npm --prefix backend install",
+    "backend:db:start": "docker compose -f backend/docker-compose.yml up -d --wait",
+    "backend:db:stop": "docker compose -f backend/docker-compose.yml stop",
+    "backend:migrate": "npm --prefix backend exec -- prisma migrate dev",
+    "backend:dev": "npm --prefix backend run start:dev",
+    "backend:build": "npm --prefix backend run build",
     "test:clean": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \"delete from auth.users where email like '%@test.dev'\""
   },
   "dependencies": {

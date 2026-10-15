@@ -1,6 +1,6 @@
 # Plan: a fair NestJS comparison
 
-**Status: plan only, nothing built.** The NestJS version (branch `nestjs-backend`, stacked on `feature/msa-supabase-advanced`) gets its own backend in `backend/`, its own Postgres database and its own login. This plan makes sure both versions are **tested by the same scenarios** and **measured the same way**, so the blog compares like with like.
+**Status: in progress (N0 scaffold done; see CLAUDE.md).** The NestJS version (branch `feature/msa-nestjs`, stacked on `feature/msa-supabase-advanced`) gets its own backend in `backend/`, its own Postgres database and its own login. This plan makes sure both versions are **tested by the same scenarios** and **measured the same way**, so the blog compares like with like.
 
 ## 1. A backend-agnostic scenario runner
 
