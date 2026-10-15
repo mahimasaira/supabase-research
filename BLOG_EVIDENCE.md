@@ -222,6 +222,31 @@ Not built; reasoning in FRICTION_LOG.md. Optional evidence for the "where Supaba
 
 ---
 
+## Security review (after all features) · commit: (not committed yet)
+
+### Step 1: Security Advisor + linter
+- [ ] Proof: `evidence/*_probe-security-advisors.txt` (11 advisor items + 1 linter warning; verdict per item in FRICTION_LOG)
+- [ ] Studio → **Advisors → Security Advisor** (http://127.0.0.1:54323): the same list in the UI
+- **Takeaway:** the advisor checks configuration; it missed both real issues found below.
+
+### Step 2: exposure scan
+- [ ] Proof BEFORE the fix: the `evidence/*_probe-security-scan.txt` with exit 1 (2 FAILs: "30 empty booking series … 30 accepted", "40 bookings … via 4 made-up series: 40 accepted")
+- [ ] Proof AFTER: the newest `evidence/*_probe-security-scan.txt` (107 checks, all passed)
+- [ ] Terminal screenshot of section 1 (the table × role matrix: can / should)
+- [ ] Code: `bookings_check_series` in `20261014212615_security_fixes.sql`
+- **Takeaway:** every insertable column is public API; the hole was a column combination no screen uses.
+
+### Step 3: SQL injection
+- [ ] Proof: `evidence/*_probe-security-sqli.txt` (19 checks)
+- [ ] Terminal screenshot of section 2 (other hosts' bookings, all account emails, Vault secrets counted)
+- [ ] Code side by side: the concatenated `EXECUTE` in `sqli_search_bookings_unsafe` vs. `execute format(… %I) using …` in the safe one
+- [ ] The two locks: the `revoke` in the migration + the `sqli_probe_switch` check
+- **Takeaway:** supabase-js is parameterised; a single string-built `EXECUTE` in a `SECURITY DEFINER` function exposes the whole database through `rpc()`.
+
+- [ ] **Summary table** "Security review: summary" (FRICTION_LOG.md)
+
+---
+
 ## Final pass (after all features)
 
 - [ ] Commit everything, then `npm run evidence -- all` (sends a few real DocuSign emails) for clean, commit-labelled outputs

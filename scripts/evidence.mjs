@@ -28,6 +28,9 @@ const ALL = [
   'probe:reminders:proof:queue',
   'probe:reminders:proof:optout',
   'probe:reminders:compare',
+  'probe:security:advisors',
+  'probe:security:scan',
+  'probe:security:sqli',
 ]
 const args = process.argv.slice(2)
 const noEmail = args.includes('--no-email')

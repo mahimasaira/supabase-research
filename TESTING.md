@@ -295,6 +295,17 @@ The script deletes only its own test emails (`…@reminder-test.example`) from M
 
 Both jobs (`enqueue-reminders` hourly, `process-reminders` every minute) exist but are **switched off**; to try the real schedule: `select cron.alter_job(jobid, active := true) from cron.job where jobname in ('enqueue-reminders', 'process-reminders')` (switch off again afterwards, or every booking 23–25 h ahead gets a reminder in Mailpit).
 
+## Security review
+
+| Do | Expect |
+|---|---|
+| `npm run probe:security:advisors` | advisor JSON (12 items: `rls_enabled_no_policy` ×7, 2× `rls_policy_always_true`, `extension_in_public`, 2 performance) + linter warnings; all reviewed in FRICTION_LOG |
+| `npm run probe:security:scan` (needs `functions:serve` for section 3, otherwise SKIP) | `All checks passed` (107): every table × anon/stranger matches the expected access, internal functions blocked, internal Edge Functions 401, storage folders private, series abuse limited (≤ quota, 0 of 40) |
+| `npm run probe:security:sqli` | `All checks passed` (19): supabase-js filters treat SQL as text; the unsafe function leaks other hosts' bookings, account emails and Vault secrets; the safe one doesn't; afterwards the unsafe one is locked |
+| Studio: `select has_function_privilege('authenticated', 'public.sqli_search_bookings_unsafe(text)', 'execute'), unsafe_enabled_until from sqli_probe_switch` | `f` and null (locked) |
+
+The scan fails with "not reviewed" when a new table, function or Edge Function appears: add it to the expectations in `src/probes/security/exposure-scan.mjs` after deciding who may use it.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |

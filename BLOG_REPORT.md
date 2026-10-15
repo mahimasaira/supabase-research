@@ -148,6 +148,18 @@ A reminder email to every guest 24 h before their session (200 test bookings, lo
 
 Skipped because it would mostly show where Supabase is **enough**: Postgres ships the full time-zone database and handles daylight-saving changes correctly. The one real Supabase limitation found: **scheduled jobs run in UTC only** (verified locally: pg_cron 1.6.4, `cron.timezone = GMT`, set at server start, not changeable by the project's database user; hosted: *to verify before publishing*), so "every day at 06:00 Berlin" shifts by an hour twice a year. Two small bugs in the project's own code were noted, not fixed (recurring bookings drift by an hour across a clock change; emails show UTC times).
 
+### Security review (after all features)  ·  ~3 h
+
+Requested by reviewers: Supabase's own checks, a scan of everything reachable, SQL injection.
+
+| Step | Result |
+|---|---|
+| 1. Security Advisor + linter (`supabase db advisors`, `db lint`) | No errors; 11 advisor items + 1 linter warning, each reviewed: 1 real (the open `booking_series` insert, see step 2), the rest intended (RLS on with no policy = closed to the API; a deliberately forgeable probe table) or cosmetic (pg_net's extension record in `public`, its objects all in `net`). |
+| 2. Exposure scan (107 checks) | Every table × {public key, a stranger's login} × {read, insert, update, delete}, judged in the database; every function via `rpc()`; all 10 Edge Functions; Storage; GraphQL; compared with an expected-access map (unknown objects fail as "not reviewed"). **No cross-host reads/writes, internal functions and Edge Functions closed.** But **2 real issues**: unlimited empty series (each a line in the host's history), and **a bypass of the spam limits: 40 bookings on one host where the limit is 10**, by attaching bookings to made-up series (weeks of a series skipped the limits and nothing tied them to the series). Fixed with a trigger (series counted at creation; bookings must match their series); all earlier proofs re-run and pass. |
+| 3. SQL injection (19 checks) | **supabase-js filters are parameterised** (SQL in a value is just text). Filter *strings* built from input (`.or(...)`) can be bent, but RLS still limits the rows. **The real risk is your own functions:** a `SECURITY DEFINER` function that builds SQL by concatenation, called via `rpc()` by a normal logged-in host, leaked **other hosts' bookings, every account's email (`auth.users`) and the Vault secrets**. The safe version (parameters + `format('%I')`) stopped every attack. The unsafe function is locked twice (no grant; a 2-minute switch) and the scan fails if it's callable. |
+
+**Findings:** Supabase's protections held where they were configured; both real holes came from **what the database exposes by design**: every insertable column combination, and every function in `public`, is public API. **Supabase's Security Advisor missed both**: it checks configuration (RLS on, policies too wide), not behaviour. In a backend, only the endpoints you write are reachable, so a hand-built `series_id` or a stray helper function wouldn't be.
+
 ---
 
 ## 6. Cross-cutting themes (for the blog's argument)
@@ -156,7 +168,7 @@ Skipped because it would mostly show where Supabase is **enough**: Postgres ship
 2. **Infrastructure you'd normally get from a library had to be built.** Job-runner behaviour (retries, backoff, dead letters, rate limiting, single-worker leases, stuck detection) was hand-built on pg_cron + pg_net + pgmq + triggers, twice (DocuSign and reminders).
 3. **Logic is scattered across runtimes.** Browser JS, PL/pgSQL (functions, triggers, RLS), Deno Edge Functions, cron definitions and Vault entries. When something fails, the evidence is in different places (`net._http_response`, function logs, `docker logs`, a status column).
 4. **Silent failures and surprising defaults.** RLS returns success for blocked updates; Realtime drops events; pg_net times out after 5 s by default; supa_audit broke sign-up; pgmq counts reads as attempts; a 504 didn't stop a function.
-5. **The database is directly exposed to every browser.** Every table and function must be locked down individually (grants + RLS + revokes); forgetting one is a data leak or an abuse vector. A traditional backend exposes only the endpoints you write.
+5. **The database is directly exposed to every browser.** Every table and function must be locked down individually (grants + RLS + revokes); forgetting one is a data leak or an abuse vector. The security review proved it: a column combination no screen uses bypassed the spam limits (40 bookings vs. a limit of 10), and one string-built function exposed `auth.users` and Vault through `rpc()`; Supabase's Security Advisor flagged neither. A traditional backend exposes only the endpoints you write.
 6. **Anonymous users are second-class.** No identity for RLS, rate limits or time zones; worked around with tokens, IP hashes and browser-supplied values.
 7. **Edge Function limits are real** (caller timeout, gateway timeout, CPU/wall-clock termination) and change how background work must be designed.
 8. **Local development friction:** webhooks can't reach localhost; Edge Functions need a separate `functions serve` process (once lost its container); config spread over several files and Vault; a time-limit test left a function running in the background.
@@ -177,6 +189,7 @@ These are **estimates of AI-assisted build time**: everything was built with **C
 | 4 DocuSign integration | ~4 h 45 min |
 | 5 Bulk reminders | ~4 h 25 min |
 | 6 Time zones (analysis only) | ~30 min |
+| Security review (advisors, exposure scan + fix, SQL injection) | ~3 h |
 
 ---
 
@@ -207,7 +220,7 @@ These are **estimates of AI-assisted build time**: everything was built with **C
 - **CAPTCHA** was tested only with Cloudflare's test keys (any token passes); real bot detection wasn't tested. The widget hasn't yet been checked in a browser.
 - **Webhooks** were tested with simulated, correctly signed DocuSign messages; real DocuSign Connect calls need a public URL.
 - **Emails** went only to Mailpit (no real provider); DocuSign emails were real (demo account).
-- **Security** testing covered unauthorised updates and data exposure for the core app (60 checks) and per-feature checks; a systematic exposure scan of all new tables/functions and explicit SQL-injection tests were **not** done.
+- **Security** testing: the core RLS checks (60), per-feature checks, Supabase's advisors, an exposure scan of every table, function, Edge Function and the avatars bucket as anon and as a stranger (107 checks), and SQL-injection tests (19). **Not covered:** Realtime subscriptions beyond the core design, Auth's own endpoints and rate limits, attacks needing a hosted project (header spoofing behind Supabase's real proxy, see the to-verify list), and dependency/supply-chain checks. The scan is only as good as its expected-access map, which was written by the same builder.
 - **Time figures** are estimates of AI-assisted build time (Claude Code), not measured and not hand-coding time; only relative effort is meaningful.
 - **Timings** come from a few local runs on one laptop (Docker). Only large, repeatable differences are quoted, as ranges with the number of runs; small differences (e.g. the advisory-lock cost) are labelled noise.
 - **To verify before publishing** (checked locally only, or not checked):
@@ -226,7 +239,7 @@ These are **estimates of AI-assisted build time**: everything was built with **C
 ## 10. Evidence available
 
 - `FRICTION_LOG.md`: every friction point with what happened, workaround, time and "backend needed?"; a stage-comparison table and a "for the blog" paragraph per feature.
-- `evidence/`: saved outputs of all 18 proof scripts (PASS/FAIL lines, comparison tables), including the "before the fix" runs (DocuSign stage 4: 11 failures; spam stage 2: the race letting 14 of 10 through).
+- `evidence/`: saved outputs of all 21 proof scripts (PASS/FAIL lines, comparison tables), including the "before the fix" runs (DocuSign stage 4: 11 failures; spam stage 2: the race letting 14 of 10 through; security scan: the limit bypass, 40 of 10).
 - `BLOG_EVIDENCE.md`: checklist of ~90 screenshots to take (not taken yet).
 - Git history: one commit per stage (21 commits), so every state can be reproduced.
 

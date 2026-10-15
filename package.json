@@ -38,6 +38,9 @@
     "probe:reminders:proof:optout": "node --env-file=.env.local src/probes/reminders/proof-optout-limits.mjs",
     "probe:reminders:compare": "node --env-file=.env.local src/probes/reminders/compare-versions.mjs",
     "evidence": "node scripts/evidence.mjs",
+    "probe:security:advisors": "supabase db advisors --local --type all --level info && supabase db lint --local --level warning",
+    "probe:security:scan": "node --env-file=.env.local src/probes/security/exposure-scan.mjs",
+    "probe:security:sqli": "node --env-file=.env.local src/probes/security/sqli-proof.mjs",
     "test:clean": "psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \"delete from auth.users where email like '%@test.dev'\""
   },
   "dependencies": {

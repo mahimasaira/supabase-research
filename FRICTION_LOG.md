@@ -30,7 +30,7 @@ All four need code that runs on a server and/or holds a secret. A Supabase Edge 
 
 | Need | Why Supabase alone can't do it |
 |---|---|
-| **Abuse protection** for guest bookings | RLS controls *who* may write, not *how often*. No rate limit on data writes; CAPTCHA only covers auth. |
+| **Abuse protection** for guest bookings | RLS controls *who* may write, not *how often*. No rate limit on data writes; Supabase's CAPTCHA is an Auth setting, not for table writes (exact coverage: to verify). |
 | **Email notifications** (booking confirmed / cancelled) | Supabase only sends auth emails; an email provider's API key can't live in the browser. |
 | **Real upload validation** | Storage trusts the declared content type; checking or re-encoding the bytes needs code. |
 | **Account deletion** incl. files | Files can only be deleted through the Storage API, not in the same SQL transaction; needs the secret key. |
@@ -644,3 +644,72 @@ Planned stages: 1. show the problem (naive scheduled loop), 2. Supabase Queues (
   - **Emails show UTC times.** Reminders (feature 5) and DocuSign agreements (feature 4) format times in UTC because the guest's zone isn't stored. Fix: store the guest's browser time zone with the booking and format with it.
 - **Time spent:** ~30 min (planning, checking `cron.timezone`, this entry)
 - **Backend needed?** **No.** Postgres covers the hard part; the only Supabase-specific gap is UTC-only scheduling, which has simple workarounds.
+
+---
+
+# Security review (after all features)
+
+Requested in review: run Supabase's own checks, scan everything the public key and a normal login can reach, and test SQL injection. Folder `src/probes/security/`, migrations `20261014212615_security_fixes.sql` (fixes) and `20261014212943_security_sqli_probe.sql` (SQL-injection probe).
+
+## Step 1: Supabase's Security Advisor and database linter
+
+`npm run probe:security:advisors` runs `supabase db advisors --local --type all` (the Security / Performance Advisor's checks, "splinter") and `supabase db lint` (plpgsql_check). **No errors; 11 advisor findings, 1 linter warning.** Every one reviewed:
+
+| Finding | Level | Verdict |
+|---|---|---|
+| `rls_policy_always_true`: `booking_series` "Anyone can create a booking series" (`with check (true)`) | WARN | **Real, fixed (step 2).** The insert has to stay open (all three recurring-booking stages insert the series as the guest), but it was **uncounted**, and it was the door for a bypass of the spam limits. |
+| `rls_policy_always_true`: `audit_log_client` "Anyone can write client audit entries" | WARN | **Intended, probe only.** This is audit-log stage 1's table, deliberately forgeable to *show* the problem. Nothing reads it except the probe. Must be dropped before any real deployment. |
+| `rls_enabled_no_policy` × 6 (rate-limit tables, reminder opt-outs and lease, test mail provider) (+1 later: `sqli_probe_switch`) | INFO | **Intended.** RLS on + no policy + no grants = closed to the API; only `SECURITY DEFINER` functions and triggers use them. The scan confirms anon and logged-in users can't read or write them. |
+| `extension_in_public`: pg_net | WARN | **Cosmetic, not changed.** Our migration said `create extension pg_net` without a schema, so the *extension record* sits in `public`, but pg_net puts all 27 of its objects in its own `net` schema (checked in `pg_depend`); nothing is added to `public`. Moving it means drop + create (pg_net can't be relocated), which would lose queued requests. On hosted, enabling it from the dashboard avoids the warning. |
+| `multiple_permissive_policies`: `slots` select | WARN (performance) | Intended (guests see free slots, hosts see their own); a small cost per query. |
+| `unused_index`: `test_mail_provider_log_at_idx` | INFO (performance) | Test double; irrelevant. |
+| Linter: `book_recurring`, `v_weeks jsonb := '[]'` "text to jsonb" | warning | Harmless (the literal is cast once). Not changed. |
+
+**Surprise: neither tool notices the two serious problems this review found.** The advisor's `with check (true)` warning *pointed at* the right table but couldn't know that weeks of a series skip the limits. And the SQL-injection function from step 3 gets **no advisor finding at all**; the linter's only remarks on it ("OUT variable maybe unmodified") are word for word the same for the safe version. The advisors check configuration (RLS on? policy too wide? search_path set?), not what your functions do.
+
+- **Time spent:** ~30 min
+
+## Step 2: exposure scan (everything the public key and a normal login can reach)
+
+`npm run probe:security:scan` (`exposure-scan.mjs`, 107 checks). Two fresh hosts: B owns the data, A is a stranger; plus a visitor with only the public key. Then:
+- **Every table** in `public`: read, insert, update, delete on B's (or internal) rows, as anon and as A. Updates and deletes are judged **in the database** (did the row change?), because a blocked update through the API answers "success, 0 rows".
+- **Every function** in `public`, called through `rpc()` as anon and as A.
+- **Every Edge Function** (all 10 have Supabase's JWT check off, so each checks callers itself), Storage (avatars), the GraphQL endpoint.
+- Each result is compared with an **expected map**. A table or function the scan doesn't know fails as "not reviewed", so anything added later must be looked at.
+
+**Result before the fixes:** everything matched (no data readable or changeable across hosts; internal functions all blocked; the 5 internal Edge Functions answer 401 without the secret key; storage folders private; GraphQL not installed) **except two abuse checks:**
+1. **Unlimited empty series:** one visitor created 30 series for a host in a row, all accepted; each became a line in the host's history page (spam in the host's own audit view).
+2. **A bypass of the spam limits (feature 3):** weeks 2+ of a series skipped the limits ("the series was counted with its first week"), but **nothing tied a booking to its series**: not the host, not the weekday, not the time. With 4 made-up series a visitor booked **40 of a host's slots; the limit is 10**. Feature 3's own proofs never tried this, because they tested the paths the app uses, not every combination of columns the grants allow.
+
+**Fix** (`20261014212615_security_fixes.sql`, ~145 lines): the three limits moved into one function used by two triggers. A **series is counted once, when it's created**, and a booking that claims to be week N of a series must match it (same host, weekday, time, guest email, week ≤ length); bookings of a series aren't counted again. After: 30 series → only the remaining quota accepted, 40 → 0. Re-ran `test:rls` (60/60) and the recurring, audit (3), spam (2) and DocuSign pending proofs: all pass.
+
+- **What this says about Supabase:** with the database exposed to the browser, **every column a role may insert is part of the public API**, including combinations no screen in the app produces (`series_id` + `week_no` on any slot). The app's own code paths were safe; the hole was in what the grants *allow*. A backend that only exposes `POST /bookings/recurring` never accepts a hand-built `series_id`.
+- **Positive:** the scan itself was easy to write (supabase-js + psql), and judging "blocked" in the database rather than by the API's answer avoids RLS's silent "0 rows" trap.
+- **Not covered:** Realtime subscriptions (core design: broadcasts carry no guest data), Auth endpoints' own rate limits, hosted-only behaviour.
+- **Time spent:** ~1 h 45 min (inventory of grants/policies/functions, the scan, finding and fixing the bypass, regression runs)
+
+## Step 3: SQL injection
+
+`npm run probe:security:sqli` (`sqli-proof.mjs`, 19 checks).
+- **supabase-js filters are parameterised:** `.eq('guest_email', "x' or '1'='1")` returns 0 rows, and a guest literally named `' or '1'='1` is found exactly once. supabase-js builds URL parameters, PostgREST sends values to Postgres as bound parameters, so a quote is just a character.
+- **A related trap that isn't SQL:** gluing user input into a PostgREST filter *string* (`.or(\`guest_email.eq.${input}\`)`) lets input like `x,guest_email.neq.x` add its own condition. Proven: the "search" returned all of the attacker's bookings, but **RLS still kept it to their own rows**.
+- **Where injection really happens: your own Postgres functions.** `sqli_search_bookings_unsafe` (a host searches their bookings) builds the query by concatenation and runs it with `EXECUTE`; it's `SECURITY DEFINER`, as such helper functions often are. Through `rpc()`, a normal logged-in host sent:
+  - `zzz%' or true --` → **every host's bookings** (214 rows of other hosts' guests in the local data);
+  - `… union all select … from auth.users --` → **every account's email address**;
+  - `… union all select … from vault.decrypted_secrets --` → **the project's Vault secrets** (the script counts them, doesn't print them).
+- **The safe version** (`sqli_search_bookings_safe`): values passed as parameters (`execute … using`), the sort column quoted with `format('%I')` (`%L` would be the choice for a value that can't be a parameter). The same inputs are searched for literally (0 rows); a sort column `starts_at; delete from public.bookings --` is just an unknown column (error, nothing runs).
+- **The unsafe function can't stay switched on by accident:** (1) no API role may execute it (revoked in the migration; the proof grants it only for its run and revokes it on exit, also on Ctrl+C or a crash); (2) even if granted, it refuses unless `sqli_probe_switch.unsafe_enabled_until` is in the future, and the proof sets that to +2 minutes; (3) the exposure scan fails if the API can call it.
+- **What this says about Supabase:** `rpc()` makes **every function in `public` with execute rights an API endpoint**, and `SECURITY DEFINER` turns off RLS inside it. One careless `EXECUTE` therefore exposes the whole database, including `auth.users` and Vault, to any logged-in user. Supabase's advisors didn't flag it (step 1). In a NestJS backend the same mistake (string-built SQL in a repository) is possible too, but the endpoint would sit behind a route and the database user wouldn't normally own `auth`/Vault-like secrets.
+- **Time spent:** ~45 min
+
+### Security review: summary
+
+| | Advisors + linter | Exposure scan | SQL injection |
+|---|---|---|---|
+| Built with | Supabase CLI (`db advisors`, `db lint`) | supabase-js + psql, expected-access map | 2 Postgres functions + proof script |
+| Found | 11 advisor + 1 linter items: 1 real (pointer to the series issue), rest intended/cosmetic | **2 real issues** (unlimited series; limit bypass 40/10), fixed | supabase-js safe; own functions are the risk; unsafe one leaked other hosts' guests, all user emails, Vault secrets |
+| Missed by Supabase's tools | — | the limit bypass | the injectable function |
+| Proof | evidence file | 107 checks | 19 checks |
+| Time | ~30 min | ~1 h 45 min | ~45 min |
+
+**For the blog:** Supabase's built-in protections held up: no cross-host reads or writes, internal functions closed, supabase-js parameterised. But the two real holes were both in **what the database exposes by design**: insertable columns the app never uses together, and a function callable via `rpc()`. Supabase's Security Advisor checks configuration and missed both; a scan that tries every table, function and column combination as each role is what found them. **Total: ~3 h.**
