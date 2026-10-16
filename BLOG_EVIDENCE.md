@@ -276,6 +276,12 @@ Not built; reasoning in FRICTION_LOG.md. Optional evidence for the "where Supaba
 - [ ] Code: the refresh lock in `src/services/nestjs/http.js` (tabs + rotating refresh tokens)
 - **Takeaway:** one Vue app, two backends behind the same function names; Supabase's database details (embeds, "0 rows", Postgres error codes) had spread into the pages and had to be pulled behind the services layer first.
 
+### N4: live updates and avatars (NestJS) · commit: (not committed yet)
+- [ ] Proof: `evidence/*_scenarios-nestjs.txt` (61/61, 2 skipped) next to Supabase's 63/63
+- [ ] Code side by side: the Supabase broadcast trigger (`slots_broadcast`, one place) vs. `this.events.slotChanged(...)` after each transaction (five places)
+- [ ] Terminal: a script renamed to `.png` uploaded to both backends (Supabase accepts, NestJS 400)
+- **Takeaway:** NestJS had to wire every live-update event by hand, but could check file contents that Supabase Storage takes on trust.
+
 ---
 
 ## Final pass (after all features)

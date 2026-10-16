@@ -359,6 +359,17 @@ The scan fails with "not reviewed" when a new table, function or Edge Function a
 | Two tabs logged in, repeat the refresh test in both at the same time | both stay logged in (refreshes are serialised across tabs) |
 | `npm run dev` without `VITE_BACKEND` | the Supabase app, unchanged |
 
+### N4: live updates and avatars (NestJS)
+
+| Do | Expect |
+|---|---|
+| `npm run scenarios:nestjs` (API running) | `61/61 passed, 2 skipped` (the 2 Supabase-only mechanics) |
+| `VITE_BACKEND=nestjs npm run dev`: booking page open in two windows, book a slot in one | it disappears in the other without reloading |
+| Host dashboard open, a guest books in another window | "Booked by …" appears without reloading |
+| Dashboard → Upload picture (PNG/JPEG/WebP ≤ 2 MB) | picture shown; also on the booking page; file under `backend/uploads/avatars/<host id>/` |
+| Upload a text file renamed to `.png` | "Only PNG, JPEG or WebP images" (the Supabase version accepts it) |
+| Restart the API while a booking page is open | after it's back, the page refetches (reconnect) |
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |

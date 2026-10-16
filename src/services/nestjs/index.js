@@ -5,11 +5,12 @@
 // Errors: the pages' error vocabulary is Postgres codes (inherited from the Supabase version:
 // 42501 = not allowed / slot taken, 23514 = invalid input, 22P02 = malformed id). HTTP statuses
 // from NestJS are translated into those codes where a page checks for one.
+import { io } from 'socket.io-client'
 import * as http from './http'
 
 // ---- what this backend can do (pages hide the rest) ----
 export const capabilities = {
-  avatars: false, realtime: false, captcha: false, signatures: false, auditHistory: false, reminders: false, probes: false,
+  avatars: true, realtime: true, captcha: false, signatures: false, auditHistory: false, reminders: false, probes: false,
 }
 
 // ---- helpers ----
@@ -65,15 +66,24 @@ export async function getMyProfile(userId) {
 }
 
 export async function updateMyProfile(userId, fields) {
-  if ('avatar_path' in fields) throw new Error('Profile pictures are not available on this backend yet.')
-  const p = await http.request(`/profiles/${userId}`, { method: 'PATCH', body: { displayName: fields.display_name } })
+  const body = { displayName: fields.display_name, avatarPath: fields.avatar_path }
+  const p = await http.request(`/profiles/${userId}`, { method: 'PATCH', body })
   return { display_name: p.displayName, avatar_path: p.avatarPath }
 }
 
-// ---- avatars: stage N4 ----
-export const uploadAvatar = notBuilt('Uploading a profile picture')
-export const removeAvatar = notBuilt('Removing a profile picture')
-export const avatarUrl = () => null
+// ---- avatars: files on the API server, /avatars/<hostId>/<file> ----
+export async function uploadAvatar(path, file) {
+  const form = new FormData()
+  form.append('file', file)
+  await http.request(`/avatars/${path}`, { method: 'POST', body: form })
+}
+
+// Best effort, like the Supabase version.
+export async function removeAvatar(path) {
+  await http.request(`/avatars/${path}`, { method: 'DELETE' }).catch(() => {})
+}
+
+export const avatarUrl = (path) => (path ? `${http.BASE_URL}/avatars/${path}` : null)
 
 // ---- slots ----
 // The guest view (free, future), also when a host looks at their own booking page.
@@ -152,11 +162,16 @@ export async function getBookingStatuses(tokens) {
   }
 }
 
-// ---- live updates: stage N4 ----
-// No push channel yet: report one "sync" so the page loads its data once, then nothing.
-export function subscribeSlots(_hostId, { onSync }) {
-  queueMicrotask(() => onSync?.())
-  return () => {}
+// ---- live updates: Socket.IO namespace /slots, one room per host ----
+// The server sends { id, startsAt, endsAt, available }; the pages expect starts_at / ends_at.
+// "connect" also fires after a reconnect: subscribe again and let the page refetch (events sent
+// while disconnected are not replayed, same as Supabase Realtime).
+export function subscribeSlots(hostId, { onChange, onSync }) {
+  const socket = io(`${http.BASE_URL}/slots`, { transports: ['websocket'] })
+  socket.on('connect', () => socket.emit('subscribe', { hostId }, () => onSync?.()))
+  socket.on('slot_changed', (e) => onChange({ id: e.id, starts_at: e.startsAt, ends_at: e.endsAt, available: e.available }))
+  socket.on('connect_error', (err) => console.warn('Live updates:', err.message))
+  return () => socket.disconnect()
 }
 
 // ---- advanced features (built later, one by one) ----

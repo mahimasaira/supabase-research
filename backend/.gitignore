@@ -3,3 +3,6 @@ node_modules
 .env
 
 /src/generated/prisma
+
+# Uploaded profile pictures (N4), local only
+/uploads

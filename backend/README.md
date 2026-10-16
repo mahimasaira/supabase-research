@@ -23,6 +23,9 @@ curl http://127.0.0.1:3000/health
 | `POST /bookings` | anyone | book a free future slot; returns only the cancel token |
 | `GET /bookings` · `PATCH /slots/:slotId/booking` | host | bookings on own slots · cancel one (`{ "status": "cancelled" }`) |
 | `POST /bookings/cancel`, `POST /bookings/statuses` | anyone with the token | guest cancels · status by token |
+| `POST /avatars/:hostId/:file` (multipart `file`, `?upsert=true`) · `DELETE /avatars/:hostId/:file` | host, own folder | PNG/JPEG/WebP ≤ 2 MB, checked by content |
+| `GET /avatars/:hostId/:file` | public | the picture |
+| Socket.IO namespace `/slots`: emit `subscribe` `{ hostId }`, receive `slot_changed` `{ id, startsAt, endsAt, available }` | anyone | live slot updates (receive only) |
 
 Every route needs a login unless marked `@Public()` / `@OptionalAuth()` (global `AuthGuard`); request bodies with unknown fields are refused (400).
 

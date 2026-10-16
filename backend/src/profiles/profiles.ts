@@ -1,15 +1,22 @@
 import { Body, Controller, ForbiddenException, Get, Injectable, Module, NotFoundException, Param, ParseUUIDPipe, Patch } from '@nestjs/common';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
 import { AuthUser, CurrentUser, Public } from '../auth/auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 
-// Only these fields can be changed; anything else in the body (id, avatarPath until N4) is
-// refused by the global ValidationPipe. Supabase: column grants.
+// Only these fields can be changed; anything else in the body (id, …) is refused by the
+// global ValidationPipe. Supabase: column grants.
 class UpdateProfileDto {
   @IsOptional()
   @IsString()
   @MaxLength(80)
   displayName?: string;
+
+  // <ownId>/<file>, or null to remove the picture.
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(200)
+  avatarPath?: string | null;
 }
 
 const view = (p: { id: string; displayName: string; avatarPath: string | null }) => ({ id: p.id, displayName: p.displayName, avatarPath: p.avatarPath });
@@ -26,6 +33,8 @@ export class ProfilesService {
 
   async update(user: AuthUser, id: string, dto: UpdateProfileDto) {
     if (id !== user.id) throw new ForbiddenException('You can only edit your own profile');
+    // Supabase: the policy's "avatar_path like '<uid>/%'" check.
+    if (dto.avatarPath && !dto.avatarPath.startsWith(`${user.id}/`)) throw new ForbiddenException('The picture must be in your own folder');
     return view(await this.prisma.profile.update({ where: { id }, data: dto }));
   }
 }

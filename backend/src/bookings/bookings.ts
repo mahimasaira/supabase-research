@@ -4,8 +4,9 @@ import {
 import { ArrayMaxSize, IsArray, IsEmail, IsIn, IsOptional, IsString, IsUUID, Length } from 'class-validator';
 import { AuthUser, CurrentUser, OptionalAuth, Public } from '../auth/auth.guard';
 import { rethrowDbError } from '../common/db-errors';
-import { Booking } from '../generated/prisma/client';
+import { Booking, Slot } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SlotEvents } from '../realtime/slot-events';
 
 // What a guest may send. status, cancelledAt, … are refused (Supabase: column grants).
 class CreateBookingDto {
@@ -47,23 +48,28 @@ const view = (b: Booking) => ({ id: b.id, slotId: b.slotId, guestName: b.guestNa
 
 @Injectable()
 export class BookingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly events: SlotEvents,
+  ) {}
 
   // One transaction: lock the slot, check it's free and in the future, insert the booking,
   // mark the slot booked. (Supabase: RLS insert policy + a trigger that sets is_booked.)
   // The partial unique index is the last line of defence if two requests still collide.
   async book(dto: CreateBookingDto) {
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const { cancelToken, slot } = await this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw`select 1 from slots where id = ${dto.slotId}::uuid for update`;
         const slot = await tx.slot.findUnique({ where: { id: dto.slotId } });
         if (!slot || slot.isBooked || slot.startsAt <= new Date()) throw new ConflictException('This slot is not available');
         const b = await tx.booking.create({
           data: { slotId: slot.id, guestName: dto.guestName, guestEmail: dto.guestEmail, ...(dto.cancelToken && { cancelToken: dto.cancelToken }) },
         });
-        await tx.slot.update({ where: { id: slot.id }, data: { isBooked: true } });
-        return { cancelToken: b.cancelToken }; // nothing else goes back to the guest
+        const updated = await tx.slot.update({ where: { id: slot.id }, data: { isBooked: true } });
+        return { cancelToken: b.cancelToken, slot: updated };
       });
+      this.events.slotChanged(slot); // after commit
+      return { cancelToken }; // nothing else goes back to the guest
     } catch (e) {
       rethrowDbError(e, { conflict: 'This slot is not available', invalid: 'Invalid guest name or email' });
     }
@@ -77,25 +83,28 @@ export class BookingsService {
 
   // A host cancels the confirmed booking on one of their slots.
   async cancelAsHost(user: AuthUser, slotId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const { booking, slot } = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`select 1 from slots where id = ${slotId}::uuid for update`;
       const b = await tx.booking.findFirst({ where: { slotId, status: 'confirmed', slot: { hostId: user.id } } });
       if (!b) throw new NotFoundException('No confirmed booking on a slot of yours');
-      return view(await this.cancel(tx, b));
+      return this.cancel(tx, b);
     });
+    this.events.slotChanged(slot);
+    return view(booking);
   }
 
   // A guest cancels with their secret token. true = cancelled now, false = unknown or already cancelled.
   async cancelByToken(token: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const slot = await this.prisma.$transaction(async (tx) => {
       const found = await tx.booking.findUnique({ where: { cancelToken: token } });
-      if (!found) return { cancelled: false };
+      if (!found) return null;
       await tx.$queryRaw`select 1 from slots where id = ${found.slotId}::uuid for update`;
       const b = await tx.booking.findUnique({ where: { cancelToken: token } });
-      if (!b || b.status !== 'confirmed') return { cancelled: false };
-      await this.cancel(tx, b);
-      return { cancelled: true };
+      if (!b || b.status !== 'confirmed') return null;
+      return (await this.cancel(tx, b)).slot;
     });
+    if (slot) this.events.slotChanged(slot);
+    return { cancelled: !!slot };
   }
 
   // Status by token, for the guest's "your bookings" list: no guest data in the answer.
@@ -104,10 +113,10 @@ export class BookingsService {
     return rows;
   }
 
-  private async cancel(tx: any, b: Booking): Promise<Booking> {
-    const updated = await tx.booking.update({ where: { id: b.id }, data: { status: 'cancelled', cancelledAt: new Date() } });
-    await tx.slot.update({ where: { id: b.slotId }, data: { isBooked: false } });
-    return updated;
+  private async cancel(tx: any, b: Booking): Promise<{ booking: Booking; slot: Slot }> {
+    const booking = await tx.booking.update({ where: { id: b.id }, data: { status: 'cancelled', cancelledAt: new Date() } });
+    const slot = await tx.slot.update({ where: { id: b.slotId }, data: { isBooked: false } });
+    return { booking, slot };
   }
 }
 

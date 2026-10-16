@@ -7,6 +7,7 @@ import { AuthUser, CurrentUser, OptionalAuth } from '../auth/auth.guard';
 import { rethrowDbError } from '../common/db-errors';
 import { Slot } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SlotEvents } from '../realtime/slot-events';
 
 // Allowed fields only: isBooked is set by the booking code, never by clients (Supabase: column grants).
 class CreateSlotDto {
@@ -39,7 +40,10 @@ const visible = (s: Slot, user?: AuthUser) => s.hostId === user?.id || (!s.isBoo
 
 @Injectable()
 export class SlotsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly events: SlotEvents,
+  ) {}
 
   async listForHost(hostId: string, user?: AuthUser) {
     const slots = await this.prisma.slot.findMany({
@@ -60,7 +64,9 @@ export class SlotsService {
     const startsAt = new Date(dto.startsAt);
     if (startsAt <= new Date()) throw new BadRequestException('Slots must start in the future');
     try {
-      return view(await this.prisma.slot.create({ data: { hostId: user.id, startsAt, endsAt: new Date(dto.endsAt) } }));
+      const slot = await this.prisma.slot.create({ data: { hostId: user.id, startsAt, endsAt: new Date(dto.endsAt) } });
+      this.events.slotChanged(slot);
+      return view(slot);
     } catch (e) {
       rethrowDbError(e, { conflict: 'Overlaps another of your slots', invalid: 'A slot must end after it starts' });
     }
@@ -69,24 +75,28 @@ export class SlotsService {
   async update(user: AuthUser, id: string, dto: UpdateSlotDto) {
     if (dto.startsAt && new Date(dto.startsAt) <= new Date()) throw new BadRequestException('Slots must start in the future');
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const slot: Slot = await this.prisma.$transaction(async (tx) => {
         const s = await this.lockOwn(tx, user, id);
         if (s.isBooked) throw new ConflictException('A booked slot cannot be moved');
         const data = { ...(dto.startsAt && { startsAt: new Date(dto.startsAt) }), ...(dto.endsAt && { endsAt: new Date(dto.endsAt) }) };
-        return view(await tx.slot.update({ where: { id }, data }));
+        return tx.slot.update({ where: { id }, data });
       });
+      this.events.slotChanged(slot); // after commit
+      return view(slot);
     } catch (e) {
       rethrowDbError(e, { conflict: 'Overlaps another of your slots', invalid: 'A slot must end after it starts' });
     }
   }
 
   async remove(user: AuthUser, id: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const slot: Slot = await this.prisma.$transaction(async (tx) => {
       const s = await this.lockOwn(tx, user, id);
       if (s.isBooked) throw new ConflictException('A booked slot cannot be deleted');
       await tx.slot.delete({ where: { id } });
-      return { id };
+      return s;
     });
+    this.events.slotChanged(slot, { deleted: true });
+    return { id };
   }
 
   // Locks the slot row until the transaction ends, so a booking can't slip in between the
