@@ -2,6 +2,7 @@
 // VITE_BACKEND picks the implementation: 'supabase' (default) or 'nestjs'.
 // Every backend must export the same function names (checked below).
 import * as supabaseBackend from './supabase'
+import * as nestjsBackend from './nestjs'
 
 const NAMES = [
   // core app (N3)
@@ -15,8 +16,7 @@ const NAMES = [
   'getCaptchaRequirement', 'setCaptchaRequirement', 'unsubscribeReminders',
 ]
 
-// nestjs: added once src/services/nestjs/ exists (N3, in progress).
-const backends = { supabase: supabaseBackend }
+const backends = { supabase: supabaseBackend, nestjs: nestjsBackend }
 const name = import.meta.env.VITE_BACKEND || 'supabase'
 const backend = backends[name]
 if (!backend) throw new Error(`Unknown VITE_BACKEND "${name}". Expected one of: ${Object.keys(backends).join(', ')}`)

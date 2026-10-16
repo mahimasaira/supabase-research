@@ -269,6 +269,13 @@ Not built; reasoning in FRICTION_LOG.md. Optional evidence for the "where Supaba
 - [ ] Code: the hand-written constraints at the end of the Prisma migration (same SQL as Supabase's init schema)
 - **Takeaway:** the same rules move from SQL policies to service code; refusals become explicit and only written endpoints exist, but "keep is_booked in sync" is now three code paths instead of one trigger.
 
+### N3: the Vue app on NestJS · commit: (not committed yet)
+- [ ] Screenshot: the same booking page on both backends (`npm run dev` vs. `VITE_BACKEND=nestjs npm run dev`), with the "backend: nestjs" badge
+- [ ] Screenshot: the NestJS dashboard with the hidden features (no CAPTCHA/signature settings, profile picture note)
+- [ ] Code side by side: `listDashboardSlots` in `src/services/supabase/core.js` (one query with an embed) vs. `src/services/nestjs/index.js` (two requests, joined)
+- [ ] Code: the refresh lock in `src/services/nestjs/http.js` (tabs + rotating refresh tokens)
+- **Takeaway:** one Vue app, two backends behind the same function names; Supabase's database details (embeds, "0 rows", Postgres error codes) had spread into the pages and had to be pulled behind the services layer first.
+
 ---
 
 ## Final pass (after all features)

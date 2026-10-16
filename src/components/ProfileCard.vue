@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { avatarUrl, getMyProfile, removeAvatar, updateMyProfile, uploadAvatar } from '@/services'
+import { avatarUrl, capabilities, getMyProfile, removeAvatar, updateMyProfile, uploadAvatar } from '@/services'
 import { friendlyError } from '@/lib/errors'
 import { AVATAR_MAX_BYTES, AVATAR_TYPES } from '@/lib/avatars'
 
@@ -96,7 +96,8 @@ async function removePicture() {
       <div v-else class="flex h-20 w-20 items-center justify-center rounded-full bg-gray-200 text-2xl text-gray-500">
         {{ (profile.display_name || '?')[0].toUpperCase() }}
       </div>
-      <div class="space-y-1 text-sm">
+      <p v-if="!capabilities.avatars" class="text-sm text-gray-500">Profile pictures aren't available on this backend yet.</p>
+      <div v-else class="space-y-1 text-sm">
         <label class="btn inline-block cursor-pointer" :class="{ 'opacity-50': busy }">
           {{ busy ? 'Uploading…' : 'Upload picture' }}
           <input type="file" accept="image/png,image/jpeg,image/webp" class="hidden" :disabled="busy" @change="upload" />

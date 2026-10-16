@@ -1,6 +1,7 @@
 <script setup>
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
+import { backendName, capabilities } from '@/services'
 
 const { user, signOut } = useAuth()
 const router = useRouter()
@@ -16,9 +17,10 @@ async function logout() {
     <nav class="mx-auto flex max-w-2xl items-center gap-4 p-4 text-sm">
       <RouterLink :to="{ name: 'home' }" class="font-semibold">Booking</RouterLink>
       <span class="flex-1" />
+      <span v-if="backendName !== 'supabase'" class="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">backend: {{ backendName }}</span>
       <template v-if="user">
         <RouterLink :to="{ name: 'dashboard' }">Dashboard</RouterLink>
-        <RouterLink :to="{ name: 'history' }">History</RouterLink>
+        <RouterLink v-if="capabilities.auditHistory" :to="{ name: 'history' }">History</RouterLink>
         <span class="text-gray-500">{{ user.email }}</span>
         <button class="underline" @click="logout">Log out</button>
       </template>

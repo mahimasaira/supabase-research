@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { cancelBookingAsHost, createSlot as createSlotService, deleteSlot as deleteSlotService, listDashboardSlots } from '@/services'
+import { capabilities, cancelBookingAsHost, createSlot as createSlotService, deleteSlot as deleteSlotService, listDashboardSlots } from '@/services'
 import { useAuth } from '@/composables/useAuth'
 import { friendlyError } from '@/lib/errors'
 import { formatSlot } from '@/lib/format'
@@ -97,8 +97,9 @@ async function cancelBooking(booking, slot) {
     </section>
 
     <ProfileCard :user-id="user.id" />
-    <SignatureSetting :user-id="user.id" @changed="load" />
-    <CaptchaSetting :user-id="user.id" />
+    <!-- Advanced features only where the backend has them (capabilities in src/services). -->
+    <SignatureSetting v-if="capabilities.signatures" :user-id="user.id" @changed="load" />
+    <CaptchaSetting v-if="capabilities.captcha" :user-id="user.id" />
 
     <p v-if="error" class="rounded bg-red-50 p-2 text-red-700">{{ error }}</p>
 

@@ -43,7 +43,7 @@ class StatusesDto {
   cancelTokens!: string[];
 }
 
-const view = (b: Booking) => ({ id: b.id, slotId: b.slotId, guestName: b.guestName, guestEmail: b.guestEmail, status: b.status, cancelledAt: b.cancelledAt });
+const view = (b: Booking) => ({ id: b.id, slotId: b.slotId, guestName: b.guestName, guestEmail: b.guestEmail, status: b.status, createdAt: b.createdAt, cancelledAt: b.cancelledAt });
 
 @Injectable()
 export class BookingsService {

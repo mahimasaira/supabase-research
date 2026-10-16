@@ -344,6 +344,21 @@ The scan fails with "not reviewed" when a new table, function or Edge Function a
 | `curl -X POST 127.0.0.1:3000/slots -H 'Content-Type: application/json' -d '{}'` | 401 "Log in first" (every route is closed unless marked public) |
 | Reset the NestJS database | `npm run backend:db:reset` (drops all data, re-applies migrations) |
 
+### N3: the Vue app on NestJS
+
+| Do | Expect |
+|---|---|
+| `npm run backend:dev` (API) and `VITE_BACKEND=nestjs npm run dev` (app) | a grey "backend: nestjs" badge in the header |
+| Sign up, log in, log out | works; no email confirmation step; the session is in localStorage under `nestjs.session` |
+| Dashboard | no CAPTCHA / signature settings, no History link; profile card: "Profile pictures aren't available on this backend yet."; changing the display name works |
+| Add a slot, delete a free slot | listed as Free / removed |
+| Logged out (or a private window): `/book/<host id>` → book a slot | confirmation with cancel link; the slot disappears |
+| Host dashboard (reload: no live updates on NestJS until N4) | "Booked by …"; Cancel booking frees the slot |
+| Guest: the cancel link → Cancel my booking | "Your booking was cancelled." |
+| Token refresh: DevTools → Application → Local Storage → `nestjs.session`, change `accessToken` to anything, reload the dashboard | still loads; `refreshToken` has changed |
+| Two tabs logged in, repeat the refresh test in both at the same time | both stay logged in (refreshes are serialised across tabs) |
+| `npm run dev` without `VITE_BACKEND` | the Supabase app, unchanged |
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
