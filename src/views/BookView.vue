@@ -1,13 +1,11 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { supabase } from '@/lib/supabase'
 import { friendlyError } from '@/lib/errors'
 import { formatDate, formatRange, formatSlot } from '@/lib/format'
 import { forgetGuestBooking, loadGuestBookings, rememberGuestBooking } from '@/lib/guestBookings'
 import { useSlotChannel } from '@/composables/useSlotChannel'
-import { avatarUrl } from '@/lib/avatars'
-import { bookSlot } from '@/services'
+import { avatarUrl, bookSlot, cancelBookingByToken, getBookingStatuses, getPublicProfile, listFreeSlots } from '@/services'
 import CaptchaWidget from '@/features/spam/CaptchaWidget.vue'
 
 const route = useRoute()
@@ -20,24 +18,19 @@ const notFound = ref(false)
 const error = ref('')
 
 async function loadHost() {
-  const { data, error: err } = await supabase.from('profiles').select('display_name, avatar_path, require_captcha').eq('id', hostId).maybeSingle()
-  // A malformed id gives a 22P02 (invalid uuid) error; treat it the same as "no such host".
-  if (err || !data) notFound.value = true
+  const data = await getPublicProfile(hostId)
+  // null = no such host, or a malformed id.
+  if (!data) notFound.value = true
   else host.value = data
 }
 
-// RLS already limits guests to free, future slots. The explicit filters matter when the
-// host views their own page: their "read own slots" policy would also return booked ones.
+// Free, future slots only, even when the host views their own page.
 async function loadSlots() {
-  const { data, error: err } = await supabase
-    .from('slots')
-    .select('id, starts_at, ends_at')
-    .eq('host_id', hostId)
-    .eq('is_booked', false)
-    .gt('starts_at', new Date().toISOString())
-    .order('starts_at')
-  if (err) error.value = friendlyError(err)
-  else slots.value = data
+  try {
+    slots.value = await listFreeSlots(hostId)
+  } catch (err) {
+    error.value = friendlyError(err)
+  }
 }
 
 onMounted(async () => {
@@ -147,8 +140,7 @@ const myBookingsHere = computed(() =>
 )
 const cancelMessage = ref('')
 
-// Guests can't read bookings, so ask the get_booking_statuses RPC about the
-// cancel tokens this browser holds. Token → 'confirmed' | 'cancelled' | 'missing'.
+// Guests can't read bookings, so ask about the cancel tokens this browser holds. Token → 'confirmed' | 'cancelled' | 'missing'.
 const statuses = ref({})
 // 'pending_signature' (feature 4): the slot is held until the guest signs the agreement.
 const isActive = (b) => ['confirmed', 'pending_signature'].includes(statuses.value[b.cancelToken] ?? 'confirmed')
@@ -157,7 +149,7 @@ const awaitingSignature = (b) => statuses.value[b.cancelToken] === 'pending_sign
 async function refreshStatuses() {
   const tokens = myBookingsHere.value.map((b) => b.cancelToken)
   if (tokens.length === 0) return
-  const { data, error: err } = await supabase.rpc('get_booking_statuses', { p_cancel_tokens: tokens })
+  const { data, error: err } = await getBookingStatuses(tokens)
   if (err) return console.warn('Could not refresh booking statuses:', err.message)
   const found = Object.fromEntries(data.map((row) => [row.cancel_token, row.status]))
   statuses.value = Object.fromEntries(tokens.map((t) => [t, found[t] ?? 'missing']))
@@ -172,7 +164,7 @@ function dismiss(b) {
 async function cancel(b) {
   if (!confirm(`Cancel your booking on ${formatSlot({ starts_at: b.startsAt, ends_at: b.endsAt })}?`)) return
   cancelMessage.value = ''
-  const { data: ok, error: err } = await supabase.rpc('cancel_booking', { p_cancel_token: b.cancelToken })
+  const { ok, error: err } = await cancelBookingByToken(b.cancelToken)
   if (err) {
     cancelMessage.value = friendlyError(err)
     return

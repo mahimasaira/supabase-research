@@ -65,7 +65,7 @@ Plan: `NESTJS_COMPARISON_PLAN.md`. Decisions (2026-10-16): **Prisma 7.10.0** (pi
 ## Rules for all work on this branch
 
 - **Pages only call functions from `src/services/`** (e.g. `bookSlot()`, `bookRecurring()`), never `supabase` directly. Supabase calls live in `src/services/supabase/`. Later `src/services/nestjs/` provides the same function names, switched with `VITE_BACKEND=supabase|nestjs`.
-  - Existing core pages that still call supabase directly (not yet refactored, leave as is unless asked): `src/views/BookView.vue` (except booking itself, which uses `bookSlot()` since spam stage 3), `src/views/DashboardView.vue`, `src/views/CancelView.vue`, `src/components/ProfileCard.vue`, `src/composables/useAuth.js`, `src/composables/useSlotChannel.js`.
+  - Since N3 (branch `feature/msa-nestjs`) the core pages go through `src/services/` too (`src/services/supabase/core.js`: auth, profile, avatars, dashboard slots, cancel, statuses, live updates). Only the probe pages under `src/probes/` and `src/lib/supabase.js` still touch supabase-js outside `src/services/supabase/`.
 - **One folder and one migration file per feature** (e.g. `src/probes/<feature>/`, `supabase/migrations/<timestamp>_<feature>.sql`).
 - **Don't hide or silently work around Supabase limitations.** Record them in `FRICTION_LOG.md`.
 - **Never put the service_role / secret key in the frontend** (no `VITE_` variable, no browser code).

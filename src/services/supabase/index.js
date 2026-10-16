@@ -7,6 +7,17 @@ import { bookRecurringEdge } from './recurring/edge'
 import * as clientAudit from './audit/clientLog'
 import * as auditHistory from './audit/history'
 
+// ---- core app (login, profile, slots, bookings, live updates, avatars): see core.js ----
+export {
+  auth, getPublicProfile, getMyProfile, updateMyProfile, uploadAvatar, removeAvatar, avatarUrl,
+  listDashboardSlots, createSlot, deleteSlot, cancelBookingAsHost, cancelBookingByToken, getBookingStatuses, subscribeSlots,
+} from './core'
+
+// What this backend can do. Pages hide what a backend doesn't have (yet).
+export const capabilities = {
+  avatars: true, realtime: true, captcha: true, signatures: true, auditHistory: true, reminders: true, probes: true,
+}
+
 // ---- slots ----
 export async function getHostProfile(hostId) {
   const { data, error } = await supabase.from('profiles').select('display_name').eq('id', hostId).maybeSingle()

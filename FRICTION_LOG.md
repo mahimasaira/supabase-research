@@ -796,3 +796,12 @@ What the Supabase core does, rebuilt: own login (sign up, log in, refresh, log o
 - **Files:** `backend/src/{auth,profiles,slots,bookings,common}` + schema + migration + adapter + shared feature: ~870 lines. Root `package.json` (+2 scripts).
 - **Testing/debugging:** easy. Errors are ordinary stack traces in one process; the shared runner gave a precise target. Restarting the API after a build is manual (or `backend:dev` watches).
 - **Time spent:** ~2 h 30 min: ~1 h *platform* (login: hashing, tokens, refresh rotation, guard; migration tooling fix), ~1 h 30 min core rules + adapter + tests
+
+## N3, part 1: core pages onto `src/services/` (Supabase only)
+
+The six core files that still called supabase-js themselves (`useAuth`, `useSlotChannel`, `lib/avatars.js`, `ProfileCard`, `DashboardView`, `BookView`, `CancelView`) now go through `src/services/`; their calls moved unchanged into `src/services/supabase/core.js`, keeping the same row shapes so the templates didn't change. `src/services/index.js` now checks at startup that a backend exports every function name, and each backend declares `capabilities`.
+
+- **Checked:** build clean; `test:rls` 60/60, `scenarios:supabase` 63/63; pages rendered in headless Chrome (booking page with the host's name and all 5 free slots, unknown host → "doesn't exist", cancel and login pages). Clicking through (book, cancel, dashboard, avatar upload, live updates) is still a manual browser check.
+- **What it shows:** the Supabase-specific parts were spread through the UI: PostgREST embeds (`bookings(...)` inside a slots query), "0 rows means refused" checks after updates, Realtime channel setup, Storage paths. Moving them behind function names took ~150 lines in one new file and touched every core page.
+- **Not changed yet:** the pages still understand Postgres error codes (`42501`, `23505`, `23P01`, `22P02`) as their error vocabulary; the NestJS services will have to translate into them (part 2).
+- **Time spent:** ~40 min

@@ -1,12 +1,5 @@
-import { supabase } from '@/lib/supabase'
-
-export const AVATAR_BUCKET = 'avatars'
-// Mirrors the bucket settings in the migration. The Storage server enforces these;
-// checking here too just gives a faster, clearer message.
+// Avatar rules shown to the user. The backend enforces them (Supabase: the bucket settings in
+// the migration); checking here too just gives a faster, clearer message.
+// The URL of a stored picture comes from the services layer (avatarUrl in '@/services').
 export const AVATAR_MAX_BYTES = 2 * 1024 * 1024
 export const AVATAR_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
-
-// Public bucket: a plain URL, no auth, no expiry. Built locally, no network request.
-export function avatarUrl(path) {
-  return path ? supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path).data.publicUrl : null
-}

@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { supabase } from '@/lib/supabase'
+import { cancelBookingByToken } from '@/services'
 import { friendlyError } from '@/lib/errors'
 import { forgetGuestBooking } from '@/lib/guestBookings'
 
@@ -13,7 +13,7 @@ const message = ref('')
 
 async function cancel() {
   state.value = 'working'
-  const { data: ok, error } = await supabase.rpc('cancel_booking', { p_cancel_token: token })
+  const { ok, error } = await cancelBookingByToken(token)
   if (error) {
     state.value = 'failed'
     // 22P02 = the token in the URL isn't a valid uuid.

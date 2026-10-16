@@ -1,8 +1,8 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { avatarUrl, getMyProfile, removeAvatar, updateMyProfile, uploadAvatar } from '@/services'
 import { friendlyError } from '@/lib/errors'
-import { AVATAR_BUCKET, AVATAR_MAX_BYTES, AVATAR_TYPES, avatarUrl } from '@/lib/avatars'
+import { AVATAR_MAX_BYTES, AVATAR_TYPES } from '@/lib/avatars'
 
 const props = defineProps({ userId: { type: String, required: true } })
 
@@ -13,20 +13,17 @@ const error = ref('')
 const info = ref('')
 
 onMounted(async () => {
-  const { data, error: err } = await supabase.from('profiles').select('display_name, avatar_path').eq('id', props.userId).single()
-  if (err) error.value = friendlyError(err)
-  else {
-    profile.value = data
-    displayName.value = data.display_name
+  try {
+    profile.value = await getMyProfile(props.userId)
+    displayName.value = profile.value.display_name
+  } catch (err) {
+    error.value = friendlyError(err)
   }
 })
 
-// Update the profile row and confirm it actually changed (RLS-blocked updates return 0 rows).
+// Throws if the profile wasn't changed (the services layer checks that).
 async function updateProfile(fields) {
-  const { data, error: err } = await supabase.from('profiles').update(fields).eq('id', props.userId).select('display_name, avatar_path')
-  if (err) throw err
-  if (data.length === 0) throw new Error('Profile could not be updated.')
-  profile.value = data[0]
+  profile.value = await updateMyProfile(props.userId, fields)
 }
 
 async function saveName() {
@@ -57,17 +54,16 @@ async function upload(event) {
   const oldPath = profile.value.avatar_path
   const newPath = `${props.userId}/${crypto.randomUUID()}.${ext}`
   try {
-    const { error: upErr } = await supabase.storage.from(AVATAR_BUCKET).upload(newPath, file, { contentType: file.type })
-    if (upErr) throw upErr
+    await uploadAvatar(newPath, file)
     try {
       await updateProfile({ avatar_path: newPath })
     } catch (e) {
       // Don't leave an orphaned file if the profile didn't accept the new path.
-      await supabase.storage.from(AVATAR_BUCKET).remove([newPath])
+      await removeAvatar(newPath)
       throw e
     }
     // Best effort: if this fails, the old file is orphaned in storage but nothing breaks.
-    if (oldPath) await supabase.storage.from(AVATAR_BUCKET).remove([oldPath])
+    if (oldPath) await removeAvatar(oldPath)
     info.value = 'Picture updated.'
   } catch (e) {
     error.value = friendlyError(e)
@@ -83,7 +79,7 @@ async function removePicture() {
   info.value = ''
   try {
     await updateProfile({ avatar_path: null })
-    await supabase.storage.from(AVATAR_BUCKET).remove([oldPath])
+    await removeAvatar(oldPath)
   } catch (e) {
     error.value = friendlyError(e)
   } finally {

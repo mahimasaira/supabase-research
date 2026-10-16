@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { cancelBookingAsHost, createSlot as createSlotService, deleteSlot as deleteSlotService, listDashboardSlots } from '@/services'
 import { useAuth } from '@/composables/useAuth'
 import { friendlyError } from '@/lib/errors'
 import { formatSlot } from '@/lib/format'
@@ -19,16 +19,10 @@ const error = ref('')
 const bookingPath = computed(() => (user.value ? `/book/${user.value.id}` : ''))
 const bookingUrl = computed(() => window.location.origin + bookingPath.value)
 
-// RLS returns only this host's slots plus other hosts' free ones, so filter on host_id.
-// `bookings(...)` is a PostgREST embed: it follows the slot_id foreign key, and RLS
-// on bookings still applies (a host only sees bookings on their own slots).
+// This host's slots, each with its bookings.
 async function load() {
   error.value = ''
-  const { data, error: err } = await supabase
-    .from('slots')
-    .select('id, starts_at, ends_at, is_booked, bookings(id, guest_name, guest_email, status, signature_status, created_at, cancelled_at)')
-    .eq('host_id', user.value.id)
-    .order('starts_at')
+  const { data, error: err } = await listDashboardSlots(user.value.id)
   if (err) error.value = friendlyError(err)
   else slots.value = data
   loading.value = false
@@ -62,11 +56,7 @@ async function createSlot() {
   creating.value = true
   const startsAt = new Date(start.value)
   const endsAt = new Date(startsAt.getTime() + duration.value * 60_000)
-  const { error: err } = await supabase.from('slots').insert({
-    host_id: user.value.id,
-    starts_at: startsAt.toISOString(),
-    ends_at: endsAt.toISOString(),
-  })
+  const { error: err } = await createSlotService({ hostId: user.value.id, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() })
   creating.value = false
   if (err) {
     // 42501 here = the insert policy's with-check failed, i.e. the slot is in the past.
@@ -78,26 +68,20 @@ async function createSlot() {
 }
 
 // ---- delete slot / cancel booking ----
-// RLS-blocked updates/deletes don't error, they just affect 0 rows,
-// so ask for the affected rows back with .select() and check the count.
+// deleted / cancelled = false: nothing changed (booked or cancelled in the meantime).
 async function deleteSlot(slot) {
   if (!confirm(`Delete slot ${formatSlot(slot)}?`)) return
-  const { data, error: err } = await supabase.from('slots').delete().eq('id', slot.id).select('id')
+  const { error: err, deleted } = await deleteSlotService(slot.id)
   if (err) error.value = friendlyError(err)
-  else if (data.length === 0) error.value = 'Could not delete: the slot was booked in the meantime. Cancel the booking first.'
+  else if (!deleted) error.value = 'Could not delete: the slot was booked in the meantime. Cancel the booking first.'
   load()
 }
 
-async function cancelBooking(booking) {
+async function cancelBooking(booking, slot) {
   if (!confirm(`Cancel ${booking.guest_name}'s booking?`)) return
-  const { data, error: err } = await supabase
-    .from('bookings')
-    .update({ status: 'cancelled' })
-    .eq('id', booking.id)
-    .in('status', ['confirmed', 'pending_signature'])
-    .select('id')
+  const { error: err, cancelled } = await cancelBookingAsHost({ bookingId: booking.id, slotId: slot.id })
   if (err) error.value = friendlyError(err)
-  else if (data.length === 0) error.value = 'That booking was already cancelled.'
+  else if (!cancelled) error.value = 'That booking was already cancelled.'
   load()
 }
 </script>
@@ -156,7 +140,7 @@ async function cancelBooking(booking) {
             </div>
             <div v-else class="text-sm text-gray-500">Free</div>
           </div>
-          <button v-if="activeBooking(slot)" class="text-sm underline" @click="cancelBooking(activeBooking(slot))">
+          <button v-if="activeBooking(slot)" class="text-sm underline" @click="cancelBooking(activeBooking(slot), slot)">
             Cancel booking
           </button>
           <button v-else class="text-sm text-red-700 underline" @click="deleteSlot(slot)">Delete</button>
